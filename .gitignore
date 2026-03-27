@@ -47,9 +47,8 @@ pyrightconfig.json
 # Output artefacts (generated files)
 output/
 
-# Large binary / data files
-example_data/
-*.edf
+# Large binary / data files (example_data/ tracked for tests)
+*.pvfs
 *.h5
 *.hdf5
 *.mp4
