@@ -1,0 +1,63 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+pip-wheel-metadata/
+*.whl
+
+# Virtual environments / Conda
+.venv/
+venv/
+env/
+.conda/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+*.xml
+
+# Type checking
+.mypy_cache/
+.pyright/
+pyrightconfig.json
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Output artefacts (generated files)
+output/
+
+# Large binary / data files
+example_data/
+*.edf
+*.h5
+*.hdf5
+*.mp4
+*.avi
+
+# Scored outputs (generated)
+*.json
+*.csv
+
+# Claude Code internal
+.claude/

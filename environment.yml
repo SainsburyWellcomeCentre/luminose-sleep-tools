@@ -1,0 +1,26 @@
+name: sleep-tools
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python>=3.11
+  - mamba
+  # Core scientific stack
+  - numpy>=1.24
+  - scipy>=1.10
+  - pandas>=2.0
+  - matplotlib>=3.7
+  # EEG/EDF I/O
+  - mne>=1.5
+  # HDF5
+  - h5py>=3.8
+  # GUI — conda-forge only packages PySide6 up to Python 3.12; pip wheel
+  #        (abi3, cp310+) is used instead and supports Python 3.14+.
+  # Video export (make_video / FFMpegWriter)
+  - ffmpeg
+  # Dev/test
+  - pytest>=7.0
+  - pytest-cov
+  - pip
+  - pip:
+      - PySide6>=6.10
