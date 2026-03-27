@@ -13,7 +13,10 @@ from __future__ import annotations
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
+from typing import TYPE_CHECKING, Sequence
+
+if TYPE_CHECKING:
+    from sleep_tools.scoring.state import ScoringSession
 
 import numpy as np
 import matplotlib.ticker as mticker
@@ -1490,6 +1493,8 @@ class Scope:
         speed: float = 1.0,
         figsize: tuple[float, float] = (12, 8),
         dpi: int = 100,
+        session: "ScoringSession | None" = None,
+        show_hypnogram: bool = True,
     ) -> Path:
         """Render a scrolling MP4 video of the specified signals.
 
@@ -1513,6 +1518,16 @@ class Scope:
             Figure size in inches.
         dpi:
             Dots per inch.
+        session:
+            :class:`~sleep_tools.scoring.state.ScoringSession` with per-epoch
+            sleep stage labels.  When provided together with
+            ``show_hypnogram=True``, a colour-coded hypnogram strip is rendered
+            below the signal traces showing the full recording timeline with a
+            vertical playhead indicating the current scroll position.
+        show_hypnogram:
+            If ``True`` (default) and *session* is supplied, append a hypnogram
+            strip at the bottom of the video.  Ignored when *session* is
+            ``None``.
         """
         if self.recording is None:
             raise ValueError("No recording loaded.")
@@ -1530,37 +1545,106 @@ class Scope:
         if t_end is None:
             t_end = self.recording.duration
 
-        # Implementation note: This is a reconstructed placeholder based on requirements.
-        # It uses matplotlib.animation.FFMpegWriter to render the video.
         import matplotlib.pyplot as plt
+        import matplotlib.colors as _mcolors
         from matplotlib.animation import FFMpegWriter
+        from sleep_tools.scoring.state import STATE_COLORS
 
         sig_data = self._prepare_with(self.recording, self.analyzer, list(signals))
         n = len(sig_data)
         if n == 0:
             raise ValueError("No valid signals found.")
 
-        fig, axes = plt.subplots(n, 1, sharex=True, figsize=figsize, gridspec_kw={"hspace": 0.05})
-        if n == 1:
-            axes = [axes]
-        
+        # ── Layout: signal rows + optional hypnogram row ──────────────────────
+        draw_hyp = show_hypnogram and session is not None
+        if draw_hyp:
+            height_ratios = [1.0] * n + [0.25]
+            fig, all_axes = plt.subplots(
+                n + 1, 1, sharex=False,
+                figsize=figsize,
+                gridspec_kw={"hspace": 0.05, "height_ratios": height_ratios},
+            )
+            axes = list(all_axes[:n])
+            hyp_ax = all_axes[n]
+        else:
+            fig, raw_axes = plt.subplots(
+                n, 1, sharex=True, figsize=figsize,
+                gridspec_kw={"hspace": 0.05},
+            )
+            axes = [raw_axes] if n == 1 else list(raw_axes)
+            hyp_ax = None
+
         lines = []
         for ax, sig in zip(axes, sig_data):
             _apply_ax_style(ax, sig, DARK_THEME)
             (line,) = ax.plot([], [], lw=0.7, color=sig.color)
             lines.append(line)
-            
-            # Use provided y_lims or auto
             if y_lims and sig.name in y_lims:
                 ax.set_ylim(y_lims[sig.name])
             else:
                 ax.set_ylim(-sig.y_half, sig.y_half)
 
-        # Time per frame
+        # ── Hypnogram strip (static pcolormesh + animated playhead) ──────────
+        hyp_playhead = None
+        if draw_hyp:
+            th = DARK_THEME
+            n_epochs = len(session.labels)  # type: ignore[union-attr]
+            L = session.epoch_len            # type: ignore[union-attr]
+            total_dur = self.recording.duration
+
+            hyp_ax.set_facecolor(th.bg)
+            hyp_ax.set_yticks([])
+            hyp_ax.set_ylabel("Stage", color=th.muted, fontsize=7, labelpad=2)
+            for spine in hyp_ax.spines.values():
+                spine.set_color(th.border)
+            hyp_ax.tick_params(colors=th.muted, labelsize=7)
+            hyp_ax.xaxis.set_major_formatter(
+                mticker.FuncFormatter(lambda v, _: f"{int(v)}s")
+            )
+
+            x_edges = np.arange(n_epochs + 1, dtype=np.float64) * L
+            y_edges = np.array([0.0, 1.0])
+            state_order = ["W", "N", "R", "U"]
+            state_to_int = {s: i for i, s in enumerate(state_order)}
+            color_vals = np.array(
+                [state_to_int.get(str(lbl), 3) for lbl in session.labels],  # type: ignore[union-attr]
+                dtype=np.float64,
+            ).reshape(1, n_epochs)
+            cmap = _mcolors.ListedColormap(
+                [STATE_COLORS["W"], STATE_COLORS["N"],
+                 STATE_COLORS["R"], STATE_COLORS["U"]]
+            )
+            hyp_ax.pcolormesh(
+                x_edges, y_edges, color_vals,
+                cmap=cmap, vmin=-0.5, vmax=3.5, shading="flat",
+            )
+            hyp_ax.set_xlim(0.0, total_dur)
+            hyp_ax.set_ylim(0.0, 1.0)
+
+            # Legend
+            from matplotlib.patches import Patch as _Patch
+            handles = [
+                _Patch(facecolor=STATE_COLORS[s], label=s, linewidth=0)
+                for s in state_order
+            ]
+            hyp_ax.legend(
+                handles=handles, loc="upper right", fontsize=6,
+                framealpha=0.5, ncol=4, handlelength=0.9, handleheight=0.9,
+                borderpad=0.3, labelspacing=0.2, columnspacing=0.5,
+                labelcolor=th.text,
+            )
+
+            # Animated playhead (vertical line showing current window centre)
+            (hyp_playhead,) = hyp_ax.plot(
+                [t_start, t_start], [0.0, 1.0],
+                color="white", lw=1.2, zorder=10,
+            )
+
+        # ── Animation ────────────────────────────────────────────────────────
         dt = speed / fps
         total_frames = int((t_end - t_start) * fps / speed)
 
-        writer = FFMpegWriter(fps=fps, metadata=dict(title='Sleep Scope'))
+        writer = FFMpegWriter(fps=fps, metadata=dict(title="Sleep Scope"))
 
         n_frames_report = max(1, total_frames // 20)
         with writer.saving(fig, str(output_path), dpi):
@@ -1574,12 +1658,16 @@ class Scope:
                     line.set_data(sig.times[i0:i1], sig.values[i0:i1])
                     ax.set_xlim(t0, t1)
 
+                if hyp_playhead is not None:
+                    t_mid = (t0 + t1) / 2.0
+                    hyp_playhead.set_xdata([t_mid, t_mid])
+
                 writer.grab_frame()
                 if (i + 1) % n_frames_report == 0 or i == total_frames - 1:
                     pct = (i + 1) / total_frames * 100
                     print(f"\rRendering video: {pct:.0f}% ({i+1}/{total_frames} frames)", end="", flush=True)
         print()
-        
+
         plt.close(fig)
         return output_path
 

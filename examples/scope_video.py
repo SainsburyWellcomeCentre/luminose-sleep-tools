@@ -12,6 +12,7 @@ Requires ffmpeg on PATH:
 from pathlib import Path
 
 from sleep_tools import SleepRecording, SleepAnalyzer, Scope
+from sleep_tools.scoring.state import ScoringSession, AutoScoreThresholds
 
 EDF = Path("example_data/luminose/LUMI-0013_2026-03-24_14_15_34_export.edf")
 
@@ -21,6 +22,12 @@ T2 = 80.0   # end time in seconds  (T2 - T1 = 20 s)
 
 rec = SleepRecording.from_edf(EDF)
 ana = SleepAnalyzer(rec, epoch_len=5.0)
+
+# ── Auto-score the full recording ─────────────────────────────────────────────
+features = ana.compute_all_features()
+session = ScoringSession(rec, epoch_len=5.0)
+session.auto_score(features, AutoScoreThresholds())
+
 scope = Scope(rec, ana)
 
 out = Path("output") / f"{rec.animal_id}_scope_epoch.mp4"
@@ -34,5 +41,7 @@ path = scope.make_video(
     speed=1.0,       # real-time: 1 s of recording → 1 s of video
     fps=30,
     dpi=150,
+    session=session,         # adds colour-coded sleep stage strip
+    show_hypnogram=True,     # True by default — pass False to omit
 )
 print(f"Saved: {path}")

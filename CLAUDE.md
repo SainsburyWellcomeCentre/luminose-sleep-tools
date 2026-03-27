@@ -77,12 +77,14 @@ Opens a PySide6 Qt window.  Backend must be `QtAgg` (set at module level in `sco
 - **Channel hide button**: `−` minus button per channel in the left panel; click to hide, re-add via **+ Add Channel**
 - **Epoch multi-select on hypnogram**: plain click = single epoch; Shift+click = contiguous range from anchor; Ctrl+click = toggle individual epoch in/out of selection (non-contiguous); single undo entry covers all epochs in one assignment
 
-### `make_video(output_path=None, *, signals, t_start, t_end, x_window, y_lims, fps, speed, figsize, dpi)`
+### `make_video(output_path=None, *, signals, t_start, t_end, x_window, y_lims, fps, speed, figsize, dpi, session=None, show_hypnogram=True)`
 Renders a scrolling MP4 video using `matplotlib.animation.FFMpegWriter`.
 
 - Defaults output to `output/<animal_id>_scope.mp4` in cwd
 - `speed`: recording-seconds per video-second (e.g. `speed=60` → 1-hour recording → 1-minute video)
 - `y_lims`: dict `{signal_name: (ymin, ymax)}` in display units (µV for EEG/EMG)
+- `session`: pass a `ScoringSession` to include a sleep-stage hypnogram strip
+- `show_hypnogram`: `True` by default; renders colour-coded hypnogram row (W/N/R/U) beneath signal traces when `session` is provided; strip spans the full recording with a white vertical playhead tracking the current scroll position
 - Requires `ffmpeg` on PATH; raises `RuntimeError` with install instructions if missing
 
 ### Signal names
