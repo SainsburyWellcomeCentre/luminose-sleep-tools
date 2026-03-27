@@ -447,7 +447,7 @@ These defaults were derived from the Spike2 scoring experience described in Juli
 | Hypnogram | `session.to_csv(path)` | CSV — epoch_index, time_s, label |
 | Full dataset | `save_to_h5(rec, path, analyzer=ana, labels=session.labels)` | HDF5 |
 | Figures | `fig.savefig(path, dpi=150, bbox_inches='tight')` | PNG/PDF |
-| Video | `scope.make_video(path, signals=[...], t_start=0, t_end=3600, speed=60)` | MP4 |
+| Video | `scope.make_video(path, signals=[...], t_start=0, t_end=3600, speed=60, session=session)` | MP4 with hypnogram |
 
 Load a previously saved session:
 

@@ -85,7 +85,17 @@ The enhanced window features:
 ## Video Export
 
 ```python
-# Render a 1-minute MP4 covering the first hour at 60× speed
+from sleep_tools import SleepRecording, SleepAnalyzer, Scope
+from sleep_tools.scoring.state import ScoringSession
+
+rec = SleepRecording.from_edf("path/to/recording_export.edf")
+ana = SleepAnalyzer(rec, epoch_len=5.0)
+ana.compute_all_features()
+session = ScoringSession.load("LUMI-0013_sleep_scores.json", rec)
+
+scope = Scope(rec, ana)
+
+# Render a 1-minute MP4 covering the first hour at 60× speed, with hypnogram
 path = scope.make_video(
     "output/my_recording.mp4",
     signals=["EEG1", "EEG2", "EMG", "delta_power", "td_ratio"],
@@ -95,10 +105,12 @@ path = scope.make_video(
     speed=60.0,          # 60 s of recording per second of video
     fps=30,
     dpi=150,
+    session=session,     # adds colour-coded hypnogram strip with playhead
+    show_hypnogram=True,
 )
 print(f"Saved: {path}")
 
-# Defaults: full recording, output/LUMI-0013_scope.mp4
+# Defaults: full recording, no hypnogram, output/LUMI-0013_scope.mp4
 path = scope.make_video()
 ```
 

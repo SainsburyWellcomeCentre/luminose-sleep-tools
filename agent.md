@@ -162,11 +162,12 @@ Key design: all 7 feature datasets are **always present** even when `analyzer=No
   - **Fix**: Replaced "Sans-serif" with a robust font stack to avoid Qt font population overhead.
   - **Y-axis labels**: Each channel axis displays its current unit (e.g. `µV`, `µV²/Hz`); label updates automatically when the unit selector changes.
   - **Channel visibility button**: Per-channel `−` hide button, right-aligned in channel label row (label has `stretch=1`). **Do NOT use `setFixedSize` on this button** — the global stylesheet sets `padding:4px 8px` for QToolButton; a 20px fixed width leaves only 4px of text space, clipping the "−" completely. Instead, omit `setFixedSize` and let the button size naturally, overriding only `color`, `font-size`, and `padding` in the widget-level stylesheet with the `QToolButton { ... }` selector.
-- `make_video(output_path=None, *, signals, t_start, t_end, x_window, y_lims, fps, speed, figsize, dpi)` → `Path`
+- `make_video(output_path=None, *, signals, t_start, t_end, x_window, y_lims, fps, speed, figsize, dpi, session=None, show_hypnogram=True)` → `Path`
   - Default output: `output/<animal_id>_scope.mp4` in cwd
   - Uses `matplotlib.animation.FuncAnimation` + `FFMpegWriter`
   - `speed` = recording-seconds per video-second
   - `y_lims` dict overrides auto-scale per signal (display units)
+  - `session`: `ScoringSession` — when provided with `show_hypnogram=True`, renders a colour-coded hypnogram strip (W/N/R/U) beneath signal traces with a vertical playhead tracking scroll position
   - Raises `RuntimeError` with install hint if ffmpeg missing
 
 #### `SleepVisualizer` (visualization.py)
