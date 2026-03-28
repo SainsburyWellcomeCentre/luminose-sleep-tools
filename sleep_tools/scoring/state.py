@@ -324,6 +324,76 @@ class ScoringSession:
             session.thresholds = AutoScoreThresholds(**data["thresholds"])
         return session
 
+    @classmethod
+    def from_h5(cls, path: str | Path, recording: SleepRecording) -> "ScoringSession":
+        """Load a previously saved session from an HDF5 file.
+
+        Reads epoch labels and, if present, scoring thresholds from a
+        file written by :func:`~sleep_tools.io.save_to_h5`.
+
+        Parameters
+        ----------
+        path:
+            HDF5 file written by :func:`~sleep_tools.io.save_to_h5`.
+        recording:
+            The matching :class:`~sleep_tools.io.SleepRecording` (must
+            produce the same number of epochs as the saved data).
+
+        Raises
+        ------
+        ValueError
+            If the HDF5 file lacks label data or the epoch count does
+            not match the recording.
+        ImportError
+            If ``h5py`` is not installed.
+        """
+        import h5py
+
+        path = Path(path)
+        with h5py.File(path, "r") as f:
+            if "/epochs/labels" not in f:
+                raise ValueError(
+                    "HDF5 file does not contain epoch labels at /epochs/labels."
+                )
+
+            epoch_len = float(f.attrs.get("epoch_len", 5.0))
+
+            # Labels are stored as UTF-8 bytes via h5py string_dtype
+            raw = f["/epochs/labels"][:]
+            labels_list = [
+                v.decode("utf-8") if isinstance(v, (bytes, bytearray)) else str(v)
+                for v in raw
+            ]
+            loaded = np.asarray(labels_list, dtype=object)
+
+            # Optional thresholds stored as group attributes
+            thresholds: AutoScoreThresholds | None = None
+            if "/epochs/thresholds" in f:
+                thr_attrs = f["/epochs/thresholds"].attrs
+                try:
+                    thresholds = AutoScoreThresholds(
+                        delta_wake=float(thr_attrs["delta_wake"]),
+                        delta_nrem=float(thr_attrs["delta_nrem"]),
+                        emg_wake=float(thr_attrs["emg_wake"]),
+                        emg_nrem=float(thr_attrs["emg_nrem"]),
+                        emg_rem=float(thr_attrs["emg_rem"]),
+                        td_rem=float(thr_attrs["td_rem"]),
+                    )
+                except KeyError:
+                    pass  # Incomplete threshold data — use defaults
+
+        session = cls(recording, epoch_len=epoch_len)
+        if len(loaded) != len(session.times):
+            raise ValueError(
+                f"HDF5 file has {len(loaded)} epochs but recording "
+                f"produces {len(session.times)} epochs at "
+                f"epoch_len={epoch_len}s."
+            )
+        session.labels = loaded
+        if thresholds is not None:
+            session.thresholds = thresholds
+        return session
+
     def to_csv(self, path: str | Path) -> Path:
         """Export the hypnogram to a CSV file (epoch_index, time_s, label).
 

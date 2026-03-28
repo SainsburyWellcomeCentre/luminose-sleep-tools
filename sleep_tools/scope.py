@@ -755,6 +755,15 @@ class Scope:
                     )
                     run_btn.clicked.connect(self_w._on_run_classification)
                     cls_l.addWidget(run_btn)
+
+                    # Load pre-scored session from HDF5 (available without analyzer)
+                    load_h5_btn = QPushButton("Load Session from H5...")
+                    load_h5_btn.setToolTip(
+                        "Load sleep-stage labels from a previously saved HDF5 file"
+                    )
+                    load_h5_btn.clicked.connect(self_w._on_load_session_h5)
+                    cls_l.addWidget(load_h5_btn)
+
                     l.addWidget(cls_box)
 
                 # ── LABELING panel (only when session exists) ──────────
@@ -1940,9 +1949,20 @@ class Scope:
                      "Drag the splitter handle between the <b>left channel panel</b> and the canvas, "
                      "or between the canvas and the <b>right sidebar</b>, to resize freely.<br>"
                      "<b>☰</b> — collapse / restore the sidebar (last width is remembered)."),
-                    ("10  Save results",
+                    ("10  Save &amp; reload results",
                      "<b>Save Session (JSON)</b> to resume later, <b>Export Hypnogram CSV</b>, "
-                     "or <b>Save HDF5</b> for downstream analysis."),
+                     "or <b>Save HDF5</b> for downstream analysis (includes signals, features, labels, "
+                     "thresholds, and TTL events).<br>"
+                     "<b>Load Session from H5…</b> (CLASSIFICATION panel) — reloads epoch labels and "
+                     "thresholds from a previously saved HDF5 file without re-running classification. "
+                     "Available as soon as a recording is loaded."),
+                    ("11  TTL events",
+                     "When the recording has a paired <b>_annotations.tsv</b> file containing TTL pulses, "
+                     "a <b>TTL EVENTS</b> panel appears in the sidebar.<br>"
+                     "• <b>Show Strips</b> — amber spans from each rising to the next falling edge<br>"
+                     "• <b>Rising Edges</b> — dotted green vertical lines<br>"
+                     "• <b>Falling Edges</b> — dotted red vertical lines<br>"
+                     "TTL times are saved automatically to <code>/ttl_events/</code> in HDF5 export."),
                 ]
 
                 for title, body in steps:
@@ -2042,6 +2062,24 @@ class Scope:
                     return
                 try:
                     self_w._session = ScoringSession.load(path, self_w._recording)
+                    self_w._sel_indices = set()
+                    self_w._sel_anchor  = None
+                    self_w._rebuild_figure()
+                    self_w._populate_sidebar()
+                except Exception as exc:
+                    from PySide6.QtWidgets import QMessageBox
+                    QMessageBox.warning(self_w, "Load Error", str(exc))
+
+            def _on_load_session_h5(self_w) -> None:
+                if not self_w._recording:
+                    return
+                path, _ = QFileDialog.getOpenFileName(
+                    self_w, "Load Session from HDF5", "", "HDF5 (*.h5 *.hdf5)"
+                )
+                if not path:
+                    return
+                try:
+                    self_w._session = ScoringSession.from_h5(path, self_w._recording)
                     self_w._sel_indices = set()
                     self_w._sel_anchor  = None
                     self_w._rebuild_figure()
@@ -2191,6 +2229,7 @@ class Scope:
         figsize: tuple[float, float] = (12, 8),
         dpi: int = 100,
         session: "ScoringSession | None" = None,
+        session_h5: "str | Path | None" = None,
         show_hypnogram: bool = True,
         theme: "str | Theme" = "dark",
     ) -> Path:
@@ -2222,16 +2261,27 @@ class Scope:
             ``show_hypnogram=True``, a colour-coded hypnogram strip is rendered
             below the signal traces showing the full recording timeline with a
             vertical playhead indicating the current scroll position.
+        session_h5:
+            Path to an HDF5 file previously saved by :func:`~sleep_tools.io.save_to_h5`
+            with a session argument.  When provided and *session* is ``None``,
+            the session is loaded automatically via
+            :meth:`~sleep_tools.scoring.state.ScoringSession.from_h5`.
+            Ignored when *session* is already supplied.
         show_hypnogram:
-            If ``True`` (default) and *session* is supplied, append a hypnogram
-            strip at the bottom of the video.  Ignored when *session* is
-            ``None``.
+            If ``True`` (default) and a session is available (via *session* or
+            *session_h5*), append a colour-coded hypnogram strip at the bottom
+            of the video.  Ignored when no session is available.
         theme:
             Color theme for the video.  Pass ``"dark"`` (default) or
             ``"light"``, or a :class:`Theme` instance for full control.
         """
         if self.recording is None:
             raise ValueError("No recording loaded.")
+
+        # Load session from HDF5 when a path is given and no session object supplied
+        if session is None and session_h5 is not None:
+            from sleep_tools.scoring.state import ScoringSession as _SS
+            session = _SS.from_h5(session_h5, self.recording)
 
         if isinstance(theme, str):
             if theme == "light":

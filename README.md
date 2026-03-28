@@ -1,6 +1,6 @@
 # sleep-tools
 
-A Python package for inspecting, visualizing, transforming, and scoring rodent sleep recordings from EDF electrophysiology files produced by the Luminose system.
+A Python package for inspecting, visualizing, transforming, and scoring rodent sleep recordings from EDF electrophysiology files acquired by the luminose team.
 
 Follows Julia's Spike2 sleep-scoring protocol, reimplemented in open-source Python.
 
@@ -148,11 +148,12 @@ from sleep_tools.scoring.state import ScoringSession
 rec = SleepRecording.from_edf("path/to/recording_export.edf")
 ana = SleepAnalyzer(rec, epoch_len=5.0)
 ana.compute_all_features()
-session = ScoringSession.load("LUMI-0013_sleep_scores.json", rec)
 
 scope = Scope(rec, ana)
 
 # Render a 1-minute MP4 covering the first hour at 60× speed, with hypnogram
+# Option A: pass a ScoringSession object directly
+session = ScoringSession.load("LUMI-0013_sleep_scores.json", rec)
 path = scope.make_video(
     "output/my_recording.mp4",
     signals=["EEG1", "EEG2", "EMG", "delta_power", "td_ratio"],
@@ -163,6 +164,16 @@ path = scope.make_video(
     fps=30,
     dpi=150,
     session=session,     # adds colour-coded hypnogram strip with playhead
+    show_hypnogram=True,
+)
+print(f"Saved: {path}")
+
+# Option B: load sleep-stage labels directly from an HDF5 file
+path = scope.make_video(
+    "output/my_recording.mp4",
+    signals=["EEG1", "EEG2", "EMG", "delta_power", "td_ratio"],
+    speed=60.0,
+    session_h5="output/LUMI-0013_scope.h5",  # labels + thresholds loaded automatically
     show_hypnogram=True,
 )
 print(f"Saved: {path}")

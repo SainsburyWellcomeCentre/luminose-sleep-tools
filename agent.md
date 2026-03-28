@@ -186,6 +186,7 @@ Key design: all 7 feature datasets are **always present** even when `analyzer=No
 - `auto_score(thresholds)` — apply threshold-based auto-scoring
 - `undo()` / `redo()` — command stack
 - `save(path)` / `load(path)` — serialize to JSON or CSV
+- `from_h5(path, recording)` — classmethod; reload epoch labels and thresholds from a previously saved HDF5 file
 
 #### `SleepScorerGUI` (scoring/gui.py)
 - Built with PyQt5/PySide6 (prefer PySide6 for licensing)
@@ -272,7 +273,8 @@ Tasks:
 7. CLASSIFICATION sidebar panel: 6 threshold spinboxes + Run Classification button ✅
 8. LABELING sidebar panel: state counts, manual W/N/R/U buttons, undo/redo, save/export ✅
 9. Save session JSON, export hypnogram CSV, save HDF5 (with thresholds in /epochs/thresholds) ✅
-10. Load session from JSON ✅
+10. Load session from JSON (`ScoringSession.load`) ✅
+10b. Load session from HDF5 (`ScoringSession.from_h5`): reads labels + thresholds from `/epochs/labels` and `/epochs/thresholds`; "Load Session from H5..." button in CLASSIFICATION panel (available before running classification) ✅
 11. `save_to_h5` updated: `session` parameter; labels + epoch_len taken from session; thresholds stored as HDF5 attributes ✅
 12. Draggable threshold reference lines: dotted lines on δ-power/EMG RMS/T:D axes; drag to update spinbox + session.thresholds live; spinbox edits also move lines ✅
 13. Full keyboard navigation: Space (play/pause), `[`/`]` + PageUp/Down (page), `←`/`→` (fine scroll), mouse-wheel (proportional scroll), Ctrl/Cmd+O (open folder), Ctrl/Cmd+E (open file) ✅

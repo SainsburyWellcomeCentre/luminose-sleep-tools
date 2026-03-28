@@ -29,6 +29,21 @@ For signal processing details and scoring workflow see [how_to_score.md](how_to_
 - `labels` (per-epoch sleep stage strings) default to `"U"` (unscored) when omitted.
 - Requires `h5py` (in `pyproject.toml` dependencies).
 
+## HDF5 Session Reload
+
+`ScoringSession.from_h5(path, recording)` — classmethod in `scoring/state.py`, exported from `sleep_tools`.
+
+Loads epoch labels and scoring thresholds from a previously saved HDF5 file (written by `save_to_h5` with a session argument).
+
+- Reads `epoch_len` from root attrs, labels from `/epochs/labels`, thresholds from `/epochs/thresholds` attrs (if present).
+- Validates that epoch count matches the recording at the stored `epoch_len`; raises `ValueError` on mismatch.
+- Thresholds are optional — if the HDF5 was saved without a session, defaults are used.
+- In Scope: **"Load Session from H5..."** button in the CLASSIFICATION panel (always visible when a recording is loaded, no prior classification required).
+
+```python
+session = ScoringSession.from_h5("output/LUMI-0013_scope.h5", recording)
+```
+
 ### HDF5 Metadata written per object
 
 | Location | Attribute | Content |
@@ -83,14 +98,15 @@ Opens a PySide6 Qt window.  Backend must be `QtAgg` (set at module level in `sco
 - **Draggable threshold lines**: after Run Classification, dotted reference lines on δ-power, EMG RMS, and T:D ratio can be dragged vertically; spinboxes update live and vice-versa
 - **? help button**: leftmost transport button; shows step-by-step scoring instructions (keyboard shortcuts are platform-aware: Cmd on macOS, Ctrl elsewhere)
 
-### `make_video(output_path=None, *, signals, t_start, t_end, x_window, y_lims, fps, speed, figsize, dpi, session=None, show_hypnogram=True)`
+### `make_video(output_path=None, *, signals, t_start, t_end, x_window, y_lims, fps, speed, figsize, dpi, session=None, session_h5=None, show_hypnogram=True)`
 Renders a scrolling MP4 video using `matplotlib.animation.FFMpegWriter`.
 
 - Defaults output to `output/<animal_id>_scope.mp4` in cwd
 - `speed`: recording-seconds per video-second (e.g. `speed=60` → 1-hour recording → 1-minute video)
 - `y_lims`: dict `{signal_name: (ymin, ymax)}` in display units (µV for EEG/EMG)
 - `session`: pass a `ScoringSession` to include a sleep-stage hypnogram strip
-- `show_hypnogram`: `True` by default; renders colour-coded hypnogram row (W/N/R/U) beneath signal traces when `session` is provided; strip spans the full recording with a white vertical playhead tracking the current scroll position
+- `session_h5`: path to an HDF5 file saved by `save_to_h5`; loads the session automatically via `ScoringSession.from_h5` when `session` is `None` — convenience alternative to constructing a `ScoringSession` explicitly
+- `show_hypnogram`: `True` by default; renders colour-coded hypnogram row (W/N/R/U) beneath signal traces when a session is available (via `session` or `session_h5`); strip spans the full recording with a white vertical playhead tracking the current scroll position
 - Requires `ffmpeg` on PATH; raises `RuntimeError` with install instructions if missing
 
 ### Signal names
@@ -109,6 +125,7 @@ Renders a scrolling MP4 video using `matplotlib.animation.FFMpegWriter`.
 - Deduplicates cross-channel entries (TSV logs each event once per EEG/EMG channel at identical timestamps).
 - Returns `{}` if no TSV is loaded or no TTL rows are found.
 - `save_to_h5` automatically writes `/ttl_events/{TTL_N}/rise_times` and `fall_times` when TTL data is present.
+- **TSV is fully optional** — if no `*_annotations.tsv` file exists alongside the EDF, the recording loads normally, `ttl_events()` returns `{}`, the TTL panel is hidden in Scope, and HDF5 export simply omits the `/ttl_events/` group. No errors are raised.
 
 ### TTL display in Scope
 
@@ -123,7 +140,7 @@ Overlays are redrawn on every scroll/play tick and removed cleanly on each redra
 
 **Stage 1 complete** — `io.py` (incl. `save_to_h5`), `analysis.py`, `visualization.py`, `scope.py` (oscilloscope + video export) implemented and tested.
 
-**Stage 2 complete** — `scoring/state.py` (`ScoringSession`, `AutoScoreThresholds`, `STATE_COLORS`), auto-scoring (Wake→NREM→REM thresholds), hypnogram strip in Scope, keyboard hotkeys (W/N/R/U, Ctrl/Cmd+Z/Y, Space, `[`/`]`, arrows, Ctrl/Cmd+O/E), CLASSIFICATION + LABELING sidebar panels, draggable threshold lines, `?` help dialog, save JSON / export CSV / save HDF5.
+**Stage 2 complete** — `scoring/state.py` (`ScoringSession`, `AutoScoreThresholds`, `STATE_COLORS`), auto-scoring (Wake→NREM→REM thresholds), hypnogram strip in Scope, keyboard hotkeys (W/N/R/U, Ctrl/Cmd+Z/Y, Space, `[`/`]`, arrows, Ctrl/Cmd+O/E), CLASSIFICATION + LABELING sidebar panels, draggable threshold lines, `?` help dialog, save JSON / export CSV / save HDF5, reload scored session from JSON or HDF5 (`ScoringSession.from_h5`).
 
 **Stage 3 in progress** — TTL event parsing (`recording.ttl_events()`), HDF5 export of TTL times, TTL overlay panel in Scope (strips, rising/falling edge markers).
 
