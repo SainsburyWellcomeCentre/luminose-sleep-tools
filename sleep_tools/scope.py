@@ -313,6 +313,13 @@ class Scope:
                 self_w._hypno_dirty: bool = True
                 # whether to draw threshold reference lines after classification
                 self_w._thr_lines_active: bool = False
+                # Draggable threshold lines state
+                self_w._thr_line_refs: list = []  # (line, text, spin_key, ax, display_to_val_factor)
+                self_w._drag_line = None
+                self_w._drag_text = None
+                self_w._drag_spin_key: str | None = None
+                self_w._drag_display_to_val: float | None = None
+                self_w._drag_cids: list = []
 
                 self_w.setWindowTitle("Sleep Scope")
                 self_w.resize(1280, 800)
@@ -363,6 +370,18 @@ class Scope:
                     QPushButton:hover, QToolButton:hover {{ border-color:{theme.accent}; }}
                     QMenu {{ background:{theme.panel}; border:1px solid {theme.border}; padding:4px; }}
                     QMenu::item:selected {{ background:{theme.accent}; color:{theme.bg}; }}
+                    QDoubleSpinBox, QSpinBox {{
+                        background:{theme.panel}; color:{theme.text};
+                        border:1px solid {theme.border}; border-radius:3px;
+                        padding:1px 2px; selection-background-color:{theme.accent};
+                    }}
+                    QDoubleSpinBox:focus, QSpinBox:focus {{ border-color:{theme.accent}; }}
+                    QComboBox {{
+                        background:{theme.panel}; color:{theme.text};
+                        border:1px solid {theme.border}; border-radius:3px; padding:1px 4px;
+                    }}
+                    QComboBox::drop-down {{ width:14px; border-left:1px solid {theme.border}; }}
+                    QComboBox QAbstractItemView {{ background:{theme.panel}; color:{theme.text}; }}
                 """)
                 
                 # Update sidebar background if it exists (avoids it staying dark in light mode)
@@ -407,6 +426,10 @@ class Scope:
                 cv_row.addWidget(left_scroll)
 
                 self_w._canvas = FigureCanvas(Figure(facecolor=t.bg))
+                # Forward canvas key events to the window so our keyPressEvent
+                # handles Space/arrows/brackets even when the canvas has focus.
+                self_w._canvas.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+                self_w._canvas.installEventFilter(self_w)
                 cv_row.addWidget(self_w._canvas, stretch=1)
                 cl.addLayout(cv_row, stretch=1)
 
@@ -431,9 +454,17 @@ class Scope:
                 tl = QHBoxLayout(transport)
                 tl.setContentsMargins(0, 0, 0, 0)
                 
+                help_btn = QToolButton()
+                help_btn.setText("?")
+                help_btn.setFixedSize(32, 32)
+                help_btn.setToolTip("How to score sleep — step by step")
+                help_btn.clicked.connect(self_w._show_help_dialog)
+                tl.addWidget(help_btn)
+
                 self_w._play_btn = QToolButton()
                 self_w._play_btn.setText("▶")
                 self_w._play_btn.setFixedSize(32, 32)
+                self_w._play_btn.setToolTip("Play / Pause  [Space]")
                 self_w._play_btn.clicked.connect(self_w._on_play_pause)
                 tl.addWidget(self_w._play_btn)
 
@@ -457,14 +488,14 @@ class Scope:
                 self_w._prev_btn = QToolButton()
                 self_w._prev_btn.setText("<")
                 self_w._prev_btn.setFixedSize(32, 32)
-                self_w._prev_btn.setToolTip("Previous Page")
+                self_w._prev_btn.setToolTip("Previous page  [ or PageUp ]")
                 self_w._prev_btn.clicked.connect(self_w._on_prev_page)
                 tl.addWidget(self_w._prev_btn)
 
                 self_w._next_btn = QToolButton()
                 self_w._next_btn.setText(">")
                 self_w._next_btn.setFixedSize(32, 32)
-                self_w._next_btn.setToolTip("Next Page")
+                self_w._next_btn.setToolTip("Next page  ] or PageDown")
                 self_w._next_btn.clicked.connect(self_w._on_next_page)
                 tl.addWidget(self_w._next_btn)
 
@@ -581,6 +612,10 @@ class Scope:
                         spin.setFixedWidth(76)
                         spin.setStyleSheet(f"color:{t.text}; font-size:10px;")
                         self_w._thr_spins[key] = spin
+                        if self_w._thr_lines_active:
+                            spin.valueChanged.connect(
+                                lambda _, k=key: self_w._on_thr_spin_changed(k)
+                            )
                         unit_lbl = QLabel(unit)
                         unit_lbl.setStyleSheet(f"color:{t.muted}; font-size:9px;")
                         thr_grid.addWidget(lbl,      row, 0)
@@ -899,6 +934,7 @@ class Scope:
                 self_w._draw(self_w._t0)
                 if self_w._thr_lines_active and self_w._session is not None:
                     self_w._draw_threshold_lines()
+                    self_w._connect_thr_drag_events()
                     self_w._canvas.draw_idle()
 
             def _on_signal_unit_changed(self_w, name, new_unit):
@@ -965,6 +1001,8 @@ class Scope:
                 else: self_w._timer.stop()
 
             def _on_play_tick(self_w):
+                if not self_w._playing:
+                    return
                 if not self_w._recording:
                     self_w._on_play_pause()
                     return
@@ -1309,56 +1347,265 @@ class Scope:
                 self_w._populate_sidebar()
 
             def _draw_threshold_lines(self_w) -> None:
-                """Draw horizontal dotted reference lines at classification thresholds."""
+                """Draw draggable dotted reference lines at classification thresholds.
+
+                Lines can be dragged vertically; the corresponding spinbox in the
+                CLASSIFICATION panel updates live and vice-versa.
+                """
+                # Remove previously drawn lines and labels
+                for line_obj, text_obj, _, _, _ in self_w._thr_line_refs:
+                    try: line_obj.remove()
+                    except Exception: pass
+                    try: text_obj.remove()
+                    except Exception: pass
+                self_w._thr_line_refs = []
+
                 if self_w._session is None:
                     return
                 thr = self_w._session.thresholds
-                th = self_w._theme
 
-                # Conversion factors: stored threshold units → base SI units
-                # delta: µV²/Hz → V²   (via _SCALE_DELTA = 1e12 / delta_bw)
                 _delta_bw = 3.5  # BANDS["delta"] = (0.5, 4.0)
-                _delta_to_base = _delta_bw / 1e12
-                _emg_to_base = 1.0 / 1e6  # µV → V
+                _delta_to_base = _delta_bw / 1e12   # µV²/Hz → V²
+                _emg_to_base = 1.0 / 1e6            # µV → V
 
                 for ax, sig in zip(self_w._axes, self_w._vis_signals):
-                    lines_spec: list[tuple[float, str, str]] = []
+                    lines_spec: list = []  # (display_val, color, label, spin_key, factor)
 
                     if sig.name == "delta_power":
                         scale = _get_signal_scale(sig.name, sig.unit)
+                        factor = 1.0 / (_delta_to_base * scale)  # display → µV²/Hz
                         lines_spec = [
                             (thr.delta_wake * _delta_to_base * scale,
-                             STATE_COLORS["W"], f"W: δ<{thr.delta_wake:.0f}"),
+                             STATE_COLORS["W"], f"W: δ<{thr.delta_wake:.0f}",
+                             "delta_wake", factor),
                             (thr.delta_nrem * _delta_to_base * scale,
-                             STATE_COLORS["N"], f"N: δ>{thr.delta_nrem:.0f}"),
+                             STATE_COLORS["N"], f"N: δ>{thr.delta_nrem:.0f}",
+                             "delta_nrem", factor),
                         ]
                     elif sig.name == "emg_rms":
                         scale = _get_signal_scale(sig.name, sig.unit)
+                        factor = 1.0 / (_emg_to_base * scale)   # display → µV
                         lines_spec = [
                             (thr.emg_wake * _emg_to_base * scale,
-                             STATE_COLORS["W"], f"W: EMG>{thr.emg_wake:.1f}"),
+                             STATE_COLORS["W"], f"W: EMG>{thr.emg_wake:.1f}",
+                             "emg_wake", factor),
                             (thr.emg_nrem * _emg_to_base * scale,
-                             STATE_COLORS["N"], f"N: EMG<{thr.emg_nrem:.1f}"),
+                             STATE_COLORS["N"], f"N: EMG<{thr.emg_nrem:.1f}",
+                             "emg_nrem", factor),
                             (thr.emg_rem  * _emg_to_base * scale,
-                             STATE_COLORS["R"], f"R: EMG<{thr.emg_rem:.1f}"),
+                             STATE_COLORS["R"], f"R: EMG<{thr.emg_rem:.1f}",
+                             "emg_rem", factor),
                         ]
                     elif sig.name == "td_ratio":
                         lines_spec = [
-                            (thr.td_rem, STATE_COLORS["R"], f"R: T:D>{thr.td_rem:.1f}"),
+                            (thr.td_rem, STATE_COLORS["R"], f"R: T:D>{thr.td_rem:.1f}",
+                             "td_rem", 1.0),
                         ]
 
-                    for val, color, label in lines_spec:
-                        ax.axhline(
-                            val, linestyle=":", linewidth=1.2,
+                    for val, color, label, spin_key, factor in lines_spec:
+                        line = ax.axhline(
+                            val, linestyle=":", linewidth=1.5,
                             color=color, alpha=0.85, zorder=3,
                         )
-                        # Small text label at the right edge of the axis
-                        ax.text(
+                        txt = ax.text(
                             0.995, val, label,
                             transform=ax.get_yaxis_transform(),
                             color=color, fontsize=7, va="bottom", ha="right",
                             alpha=0.85, clip_on=True,
                         )
+                        self_w._thr_line_refs.append((line, txt, spin_key, ax, factor))
+
+            # ── Draggable threshold lines ──────────────────────────────
+
+            def _connect_thr_drag_events(self_w) -> None:
+                """Bind/refresh mouse events for dragging threshold reference lines."""
+                for cid in self_w._drag_cids:
+                    try: self_w._canvas.mpl_disconnect(cid)
+                    except Exception: pass
+                self_w._drag_cids = []
+                self_w._drag_line = None
+                self_w._drag_text = None
+                self_w._drag_spin_key = None
+                self_w._drag_display_to_val = None
+                if not self_w._thr_line_refs:
+                    return
+                self_w._drag_cids = [
+                    self_w._canvas.mpl_connect("button_press_event",   self_w._on_thr_press),
+                    self_w._canvas.mpl_connect("motion_notify_event",  self_w._on_thr_move),
+                    self_w._canvas.mpl_connect("button_release_event", self_w._on_thr_release),
+                ]
+
+            def _on_thr_press(self_w, event) -> None:
+                if event.button != 1 or event.inaxes is None or event.ydata is None:
+                    return
+                if event.inaxes is self_w._hypno_ax:
+                    return
+                ax = event.inaxes
+                bbox = ax.get_window_extent()
+                ylim = ax.get_ylim()
+                if ylim[1] == ylim[0] or bbox.height == 0:
+                    return
+                PIXEL_TOL = 8
+
+                def data_to_px(y: float) -> float:
+                    return bbox.y0 + (y - ylim[0]) / (ylim[1] - ylim[0]) * bbox.height
+
+                click_px = data_to_px(event.ydata)
+                best_dist = float("inf")
+                best: tuple | None = None
+                for line, txt, spin_key, line_ax, factor in self_w._thr_line_refs:
+                    if line_ax is not ax:
+                        continue
+                    dist = abs(data_to_px(float(line.get_ydata()[0])) - click_px)
+                    if dist < PIXEL_TOL and dist < best_dist:
+                        best_dist = dist
+                        best = (line, txt, spin_key, factor)
+                if best:
+                    self_w._drag_line, self_w._drag_text, self_w._drag_spin_key, self_w._drag_display_to_val = best
+
+            def _on_thr_move(self_w, event) -> None:
+                if self_w._drag_line is None or event.inaxes is None or event.ydata is None:
+                    return
+                spin_key = self_w._drag_spin_key
+                factor = self_w._drag_display_to_val
+                if spin_key is None or factor is None:
+                    return
+                y_new = event.ydata
+
+                # Clamp to spinbox range
+                if spin_key in self_w._thr_spins:
+                    spin = self_w._thr_spins[spin_key]
+                    thr_val = max(spin.minimum(), min(spin.maximum(), y_new * factor))
+                    y_new = thr_val / factor
+                else:
+                    thr_val = y_new * factor
+
+                # Move line
+                self_w._drag_line.set_ydata([y_new, y_new])
+
+                # Update text label
+                _label_fmt = {
+                    "delta_wake": f"W: δ<{thr_val:.0f}",
+                    "delta_nrem": f"N: δ>{thr_val:.0f}",
+                    "emg_wake":   f"W: EMG>{thr_val:.1f}",
+                    "emg_nrem":   f"N: EMG<{thr_val:.1f}",
+                    "emg_rem":    f"R: EMG<{thr_val:.1f}",
+                    "td_rem":     f"R: T:D>{thr_val:.1f}",
+                }
+                if self_w._drag_text is not None:
+                    self_w._drag_text.set_position((0.995, y_new))
+                    self_w._drag_text.set_text(_label_fmt.get(spin_key, ""))
+
+                # Update spinbox silently (no re-draw loop)
+                if spin_key in self_w._thr_spins:
+                    self_w._thr_spins[spin_key].blockSignals(True)
+                    self_w._thr_spins[spin_key].setValue(thr_val)
+                    self_w._thr_spins[spin_key].blockSignals(False)
+
+                # Keep session thresholds in sync
+                if self_w._session is not None:
+                    thr = self_w._session.thresholds
+                    kw = {
+                        "delta_wake": thr.delta_wake, "delta_nrem": thr.delta_nrem,
+                        "emg_wake":   thr.emg_wake,   "emg_nrem":   thr.emg_nrem,
+                        "emg_rem":    thr.emg_rem,     "td_rem":     thr.td_rem,
+                    }
+                    if spin_key in kw:
+                        kw[spin_key] = thr_val
+                    self_w._session.thresholds = AutoScoreThresholds(**kw)
+
+                self_w._canvas.draw_idle()
+
+            def _on_thr_release(self_w, _event) -> None:
+                self_w._drag_line = None
+                self_w._drag_text = None
+                self_w._drag_spin_key = None
+                self_w._drag_display_to_val = None
+
+            def _on_thr_spin_changed(self_w, key: str) -> None:
+                """Redraw threshold lines when a spinbox is edited manually."""
+                if not self_w._thr_lines_active or self_w._session is None:
+                    return
+                thr = self_w._session.thresholds
+                kw = {
+                    "delta_wake": thr.delta_wake, "delta_nrem": thr.delta_nrem,
+                    "emg_wake":   thr.emg_wake,   "emg_nrem":   thr.emg_nrem,
+                    "emg_rem":    thr.emg_rem,     "td_rem":     thr.td_rem,
+                }
+                if key in self_w._thr_spins and key in kw:
+                    kw[key] = self_w._thr_spins[key].value()
+                self_w._session.thresholds = AutoScoreThresholds(**kw)
+                self_w._draw_threshold_lines()
+                self_w._canvas.draw_idle()
+
+            # ── Help dialog ────────────────────────────────────────────
+
+            def _show_help_dialog(self_w) -> None:
+                from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QScrollArea, QWidget
+                dlg = QDialog(self_w)
+                dlg.setWindowTitle("How to Score Sleep")
+                dlg.setFixedWidth(460)
+                dlg.setMaximumHeight(600)
+                outer = QVBoxLayout(dlg)
+                outer.setContentsMargins(0, 0, 0, 0)
+
+                scroll = QScrollArea()
+                scroll.setWidgetResizable(True)
+                scroll.setFrameShape(QFrame.Shape.NoFrame)
+                inner = QWidget()
+                layout = QVBoxLayout(inner)
+                layout.setContentsMargins(16, 16, 16, 8)
+                layout.setSpacing(10)
+
+                t = self_w._theme
+                # On macOS, Qt maps Cmd to ControlModifier — show the right key name
+                _mod = "Cmd" if sys.platform == "darwin" else "Ctrl"
+                steps = [
+                    ("1  Load a recording",
+                     f"<b>{_mod}+E</b> — open file  |  <b>{_mod}+O</b> — open folder<br>"
+                     "Or use Open File… / Open Folder… in the RECORDING sidebar panel."),
+                    ("2  Analyze signals",
+                     "Click <b>Analyze Signals</b> to compute EEG power bands, EMG RMS, and the T:D ratio. Required before classification."),
+                    ("3  Set thresholds &amp; classify",
+                     "Adjust Wake / NREM / REM thresholds in the <b>CLASSIFICATION</b> panel, then click <b>Run Classification</b>. "
+                     "Dotted lines appear on the δ-power, EMG RMS, and T:D ratio traces."),
+                    ("4  Adjust thresholds interactively",
+                     "Drag any dotted reference line up or down — the spinbox updates live. "
+                     "Or edit the spinbox directly and the line moves."),
+                    ("5  Review the hypnogram",
+                     "Click an epoch in the colour strip to select it.<br>"
+                     "• <b>Shift+click</b> for a contiguous range<br>"
+                     f"• <b>{_mod}+click</b> to toggle individual epochs"),
+                    ("6  Label epochs",
+                     f"<b>W / N / R / U</b> — assign Wake, NREM, REM, or Unscored to selected epochs.<br>"
+                     f"<b>{_mod}+Z / {_mod}+Y</b> — undo / redo."),
+                    ("7  Navigate",
+                     "<b>Space</b> — play / pause<br>"
+                     "<b>[ / ]</b> or <b>PageUp / PageDown</b> — page back / forward<br>"
+                     "<b>← / →</b> — fine scroll (10 % of window)<br>"
+                     "<b>Mouse wheel</b> — scroll signals left / right"),
+                    ("8  Save results",
+                     "<b>Save Session (JSON)</b> to resume later, <b>Export Hypnogram CSV</b>, "
+                     "or <b>Save HDF5</b> for downstream analysis."),
+                ]
+
+                for title, body in steps:
+                    title_lbl = QLabel(f"<b style='font-size:12px'>{title}</b>")
+                    body_lbl = QLabel(f"<span style='color:{t.muted}'>{body}</span>")
+                    body_lbl.setWordWrap(True)
+                    body_lbl.setTextFormat(Qt.TextFormat.RichText)
+                    layout.addWidget(title_lbl)
+                    layout.addWidget(body_lbl)
+
+                layout.addStretch()
+                scroll.setWidget(inner)
+                outer.addWidget(scroll)
+
+                close_btn = QPushButton("Got it")
+                close_btn.setFixedHeight(34)
+                close_btn.clicked.connect(dlg.accept)
+                outer.addWidget(close_btn)
+                dlg.exec()
 
             def _on_toggle_theme(self_w) -> None:
                 """Switch between dark and light themes."""
@@ -1447,8 +1694,30 @@ class Scope:
                     from PySide6.QtWidgets import QMessageBox
                     QMessageBox.warning(self_w, "Load Error", str(exc))
 
+            def eventFilter(self_w, obj, event):  # type: ignore[override]
+                """Forward canvas key/wheel events so our handlers always fire."""
+                from PySide6.QtCore import QEvent
+                if obj is self_w._canvas:
+                    if event.type() == QEvent.Type.KeyPress:
+                        self_w.keyPressEvent(event)
+                        return True
+                    if event.type() == QEvent.Type.Wheel:
+                        # Proportional scroll: 120 units = one mouse-wheel notch = 15% of window.
+                        # Trackpad sends many small deltas so it accumulates naturally and stops
+                        # immediately when the gesture ends (no fixed jumps).
+                        delta = event.angleDelta().y()
+                        step = (delta / 120.0) * self_w._x_window * 0.15
+                        new_t0 = self_w._t0 - step   # +delta → scroll left
+                        new_t0 = max(0.0, new_t0)
+                        if self_w._recording:
+                            max_t0 = max(0.0, self_w._recording.duration - self_w._x_window)
+                            new_t0 = min(max_t0, new_t0)
+                        self_w._scrollbar.setValue(int(new_t0 * _SCROLLBAR_RES))
+                        return True
+                return super().eventFilter(obj, event)
+
             def keyPressEvent(self_w, event) -> None:  # type: ignore[override]
-                """W/N/R/U keys assign stages; Ctrl+Z/Y for undo/redo."""
+                """Keyboard shortcuts for playback, navigation, and staging."""
                 key  = event.key()
                 mods = event.modifiers()
                 Ctrl = Qt.KeyboardModifier.ControlModifier
@@ -1457,7 +1726,35 @@ class Scope:
                     self_w._on_undo(); return
                 if key == Qt.Key.Key_Y and (mods & Ctrl):
                     self_w._on_redo(); return
+                if key == Qt.Key.Key_O and (mods & Ctrl):
+                    self_w._on_open_folder(); return
+                if key == Qt.Key.Key_E and (mods & Ctrl):
+                    self_w._on_open_file(); return
 
+                # Play / pause
+                if key == Qt.Key.Key_Space:
+                    self_w._on_play_pause(); return
+
+                # Page navigation: [ / ] and PageUp / PageDown
+                if key in (Qt.Key.Key_BracketLeft, Qt.Key.Key_PageUp):
+                    self_w._on_prev_page(); return
+                if key in (Qt.Key.Key_BracketRight, Qt.Key.Key_PageDown):
+                    self_w._on_next_page(); return
+
+                # Fine scroll: ← / → (10 % of visible window)
+                if key == Qt.Key.Key_Left:
+                    step = self_w._x_window * 0.1
+                    new_t0 = max(0.0, self_w._t0 - step)
+                    self_w._scrollbar.setValue(int(new_t0 * _SCROLLBAR_RES))
+                    return
+                if key == Qt.Key.Key_Right and self_w._recording:
+                    step = self_w._x_window * 0.1
+                    max_t0 = max(0.0, self_w._recording.duration - self_w._x_window)
+                    new_t0 = min(max_t0, self_w._t0 + step)
+                    self_w._scrollbar.setValue(int(new_t0 * _SCROLLBAR_RES))
+                    return
+
+                # Sleep stage assignment (W / N / R / U)
                 if self_w._session is not None:
                     _state_keys = {
                         Qt.Key.Key_W: "W",
@@ -1471,7 +1768,10 @@ class Scope:
 
                 super().keyPressEvent(event)
 
-        app = QApplication.instance() or QApplication(sys.argv)
+        app: QApplication = QApplication.instance() or QApplication(sys.argv)  # type: ignore[assignment]
+        # Fusion style draws spinbox/combobox arrows using QPalette ButtonText color,
+        # which gives white arrows on dark backgrounds and black arrows on light ones.
+        app.setStyle("Fusion")
         win = _ScopeWindow(self.recording, self.analyzer)
         win.show()
         app.exec()

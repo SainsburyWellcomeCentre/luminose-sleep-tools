@@ -72,10 +72,13 @@ Opens a PySide6 Qt window.  Backend must be `QtAgg` (set at module level in `sco
 
 - `signals`: list of channel/feature names (defaults: all raw channels + all derived if analyzer given)
 - `x_window`: visible time window in seconds
-- Controls: horizontal scrollbar, window-width spinbox, per-channel amplitude spinbox, Reset Y
+- Controls: horizontal scrollbar, window-width spinbox, per-channel amplitude spinbox
 - **Y-axis labels**: each channel axis shows `<channel name>\n(<unit>)` rotated horizontal on the left side of the plot; updates automatically when unit selector changes
 - **Channel hide button**: `−` minus button per channel in the left panel; click to hide, re-add via **+ Add Channel**
-- **Epoch multi-select on hypnogram**: plain click = single epoch; Shift+click = contiguous range from anchor; Ctrl+click = toggle individual epoch in/out of selection (non-contiguous); single undo entry covers all epochs in one assignment
+- **Epoch multi-select on hypnogram**: plain click = single epoch; Shift+click = contiguous range from anchor; Ctrl/Cmd+click = toggle individual epoch in/out of selection (non-contiguous); single undo entry covers all epochs in one assignment
+- **Keyboard shortcuts**: Space (play/pause), `[`/`]` or PageUp/PageDown (page back/forward), `←`/`→` (fine scroll 10%), mouse wheel (proportional scroll), Ctrl/Cmd+Z/Y (undo/redo), Ctrl/Cmd+O (open folder), Ctrl/Cmd+E (open file), W/N/R/U (assign sleep stage)
+- **Draggable threshold lines**: after Run Classification, dotted reference lines on δ-power, EMG RMS, and T:D ratio can be dragged vertically; spinboxes update live and vice-versa
+- **? help button**: leftmost transport button; shows step-by-step scoring instructions (keyboard shortcuts are platform-aware: Cmd on macOS, Ctrl elsewhere)
 
 ### `make_video(output_path=None, *, signals, t_start, t_end, x_window, y_lims, fps, speed, figsize, dpi, session=None, show_hypnogram=True)`
 Renders a scrolling MP4 video using `matplotlib.animation.FFMpegWriter`.
@@ -99,7 +102,7 @@ Renders a scrolling MP4 video using `matplotlib.animation.FFMpegWriter`.
 
 **Stage 1 complete** — `io.py` (incl. `save_to_h5`), `analysis.py`, `visualization.py`, `scope.py` (oscilloscope + video export) implemented and tested.
 
-**Stage 2 complete** — `scoring/state.py` (`ScoringSession`, `AutoScoreThresholds`, `STATE_COLORS`), auto-scoring (Wake→NREM→REM thresholds), hypnogram strip in Scope, keyboard hotkeys (W/N/R/U, Ctrl+Z/Y), CLASSIFICATION + LABELING sidebar panels, save JSON / export CSV / save HDF5.
+**Stage 2 complete** — `scoring/state.py` (`ScoringSession`, `AutoScoreThresholds`, `STATE_COLORS`), auto-scoring (Wake→NREM→REM thresholds), hypnogram strip in Scope, keyboard hotkeys (W/N/R/U, Ctrl/Cmd+Z/Y, Space, `[`/`]`, arrows, Ctrl/Cmd+O/E), CLASSIFICATION + LABELING sidebar panels, draggable threshold lines, `?` help dialog, save JSON / export CSV / save HDF5.
 
 See `agent.md` → Stage Breakdown for what is complete and what is next.
 

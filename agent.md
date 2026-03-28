@@ -268,12 +268,16 @@ Tasks:
 3. Auto-score via `ScoringSession.auto_score(features, thresholds)` (Wake→NREM→REM) ✅
 4. Hypnogram strip in Scope figure (pcolormesh, color-coded W/N/R/U) ✅
 5. Click to select epoch, Shift+click to extend selection range ✅
-6. W/N/R/U keyboard hotkeys for state assignment; Ctrl+Z/Y for undo/redo ✅
+6. W/N/R/U keyboard hotkeys for state assignment; Ctrl/Cmd+Z/Y for undo/redo ✅
 7. CLASSIFICATION sidebar panel: 6 threshold spinboxes + Run Classification button ✅
 8. LABELING sidebar panel: state counts, manual W/N/R/U buttons, undo/redo, save/export ✅
 9. Save session JSON, export hypnogram CSV, save HDF5 (with thresholds in /epochs/thresholds) ✅
 10. Load session from JSON ✅
 11. `save_to_h5` updated: `session` parameter; labels + epoch_len taken from session; thresholds stored as HDF5 attributes ✅
+12. Draggable threshold reference lines: dotted lines on δ-power/EMG RMS/T:D axes; drag to update spinbox + session.thresholds live; spinbox edits also move lines ✅
+13. Full keyboard navigation: Space (play/pause), `[`/`]` + PageUp/Down (page), `←`/`→` (fine scroll), mouse-wheel (proportional scroll), Ctrl/Cmd+O (open folder), Ctrl/Cmd+E (open file) ✅
+14. `?` help button (transport bar, leftmost): scrollable step-by-step dialog; modifier key names are platform-aware (Cmd on macOS, Ctrl elsewhere) ✅
+15. Fusion Qt style set at app init: ensures spinbox/combobox arrows use palette colors (white in dark theme, black in light theme) ✅
 
 Key classes:
 - `ScoringSession(recording, epoch_len=5.0)` — exported from `sleep_tools`

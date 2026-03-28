@@ -68,19 +68,17 @@ scope.show()
 # scope.show()
 ```
 
-The enhanced window features:
-- **Action Bar (Left)** — Gear icon toggles the control panel to maximize plot area.
-- **File Menu** — Load recordings or folders directly from the GUI.
-- **Horizontal scrollbar** — Scrub through the full recording with real-time time display.
-- **Time Window** — Adjust visible window width (0.1 – 3600 s).
-- **Time Units** — Select display units: `auto`, `s` (seconds), `m` (minutes), or `h` (hours).
-- **Amplitude Optimization**:
-  - **Optimize View**: Auto-scale all visible signals to fit the current window's range.
-  - **Auto**: Continuously optimize amplitude during playback.
-  - **Reset All**: Scale all channels based on their full-recording 99th-percentile.
-- **Channel Toggle** — Click the `−` button next to any channel name to hide it; re-add via **+ Add Channel**.
-- **Y-Axis Labels** — Each channel axis shows its current unit (e.g. `µV`, `µV²/Hz`); updates automatically when the unit selector is changed.
-- **Theme Selection** — Switch between System, Dark, and Light modes.
+The window features:
+- **Horizontal scrollbar** — Scrub through the full recording. Mouse wheel also scrolls (proportional to delta — trackpad-friendly).
+- **Play / Pause** — Transport button or `Space`. Speed slider (1×–100×, log-mapped).
+- **Page navigation** — `<` / `>` buttons, or `[` / `]` keys, or PageUp / PageDown.
+- **Fine scroll** — `←` / `→` keys (10 % of visible window per press).
+- **Time Window** — Adjust visible width (0.1 – 3600 s) via the `⌛` menu.
+- **Per-channel controls** — Amplitude spinbox, unit selector, and Optimize Scale button for each trace.
+- **Channel Toggle** — Click `−` next to any channel to hide it; re-add via **+ Add Channel**.
+- **Y-Axis Labels** — Shows current unit (e.g. `µV`, `µV²/Hz`); updates automatically.
+- **Theme** — `☯` button toggles dark / light. Spinbox and combobox arrows adapt to the theme (white on dark, black on light).
+- **? Help** — Leftmost transport button; step-by-step scoring guide with platform-aware shortcuts (Cmd on macOS).
 
 ## Video Export
 
@@ -211,8 +209,11 @@ scope.show()
 The Scope window provides:
 - Hypnogram strip with colour-coded epochs (amber = Wake, blue = NREM, green = REM)
 - CLASSIFICATION panel: six threshold spinboxes + Run Classification button
-- LABELING panel: state counts, W/N/R/U buttons, undo/redo (Ctrl+Z/Y), save/export
-- Click or Shift+click epochs in the hypnogram, press W/N/R/U to relabel
+- **Draggable threshold lines** — dotted reference lines on δ-power, EMG RMS, and T:D axes; drag up/down to adjust thresholds live (spinboxes sync, and vice-versa)
+- LABELING panel: state counts, W/N/R/U buttons, undo/redo, save/export
+- Click or Shift+click epochs in the hypnogram to select; Cmd/Ctrl+click to toggle
+- Press **W / N / R / U** to relabel selected epochs; **Cmd/Ctrl+Z/Y** to undo/redo
+- **`?` button** — opens a step-by-step scoring guide with all keyboard shortcuts
 
 ## Example Scripts
 
