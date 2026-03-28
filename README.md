@@ -25,6 +25,28 @@ mamba activate sleep-tools      # or conda activate sleep-tools
 pip install -e .
 ```
 
+## Running the Viewer
+
+After installation, launch the interactive scorer from the project root:
+
+```bash
+python run_scope.py                  # open empty — load a file from inside the viewer
+python run_scope.py path/to/file.edf # load a specific recording on startup
+```
+
+Or use the installed CLI command (requires `pip install -e .`):
+
+```bash
+sleep-scope
+sleep-scope path/to/file.edf
+```
+
+Or as a module:
+
+```bash
+python -m sleep_tools [path_to_edf]
+```
+
 ## Quick Start
 
 ```python
@@ -49,6 +71,42 @@ fig.savefig("spectrogram.png", dpi=150, bbox_inches="tight")
 fig = viz.plot_overview(channel="EEG1")
 fig.savefig("overview.png", dpi=150, bbox_inches="tight")
 ```
+
+## Sleep Scoring
+
+See **[how_to_score.md](how_to_score.md)** for a complete guide covering signal processing details and step-by-step scoring instructions.
+
+```python
+from sleep_tools import SleepRecording, SleepAnalyzer, Scope, ScoringSession
+
+rec = SleepRecording.from_edf("path/to/recording_export.edf")
+ana = SleepAnalyzer(rec, epoch_len=5.0)
+features = ana.compute_all_features()
+
+# Auto-score with default thresholds
+session = ScoringSession(rec, epoch_len=5.0)
+session.auto_score(features)
+print(session)
+# ScoringSession(animal='LUMI-0013', n_epochs=2356, epoch_len=5.0s,
+#                W=823, N=1012, R=289, U=232)
+
+# Save / export
+session.save("LUMI-0013_sleep_scores.json")
+session.to_csv("LUMI-0013_hypnogram.csv")
+
+# Open the oscilloscope for interactive review and manual correction
+scope = Scope(rec, ana)
+scope.show()
+```
+
+The Scope window provides:
+- Hypnogram strip with colour-coded epochs (amber = Wake, blue = NREM, green = REM)
+- CLASSIFICATION panel: six threshold spinboxes + Run Classification button
+- **Draggable threshold lines** — dotted reference lines on δ-power, EMG RMS, and T:D axes; drag up/down to adjust thresholds live (spinboxes sync, and vice-versa)
+- LABELING panel: state counts, W/N/R/U buttons, undo/redo, save/export
+- Click or Shift+click epochs in the hypnogram to select; Cmd/Ctrl+click to toggle
+- Press **W / N / R / U** to relabel selected epochs; **Cmd/Ctrl+Z/Y** to undo/redo
+- **`?` button** — opens a step-by-step scoring guide with all keyboard shortcuts
 
 ## Oscilloscope Viewer
 
@@ -179,64 +237,6 @@ for name, info in FEATURE_INFO.items():
 | `td_ratio` | theta / delta (derived) | dimensionless | Peak in REM; low in NREM; moderate in Wake |
 
 Band powers use Hann-windowed STFT (`scipy.signal.spectrogram`, `scaling="density"`) integrated over each band with `np.trapezoid`. EMG RMS uses an FIR bandpass (5–45 Hz, transition 1.8 Hz) followed by a causal exponential smoother (τ = 5 s).
-
-## Sleep Scoring
-
-See **[how_to_score.md](how_to_score.md)** for a complete guide covering signal processing details and step-by-step scoring instructions.
-
-```python
-from sleep_tools import SleepRecording, SleepAnalyzer, Scope, ScoringSession
-
-rec = SleepRecording.from_edf("path/to/recording_export.edf")
-ana = SleepAnalyzer(rec, epoch_len=5.0)
-features = ana.compute_all_features()
-
-# Auto-score with default thresholds
-session = ScoringSession(rec, epoch_len=5.0)
-session.auto_score(features)
-print(session)
-# ScoringSession(animal='LUMI-0013', n_epochs=2356, epoch_len=5.0s,
-#                W=823, N=1012, R=289, U=232)
-
-# Save / export
-session.save("LUMI-0013_sleep_scores.json")
-session.to_csv("LUMI-0013_hypnogram.csv")
-
-# Open the oscilloscope for interactive review and manual correction
-scope = Scope(rec, ana)
-scope.show()
-```
-
-The Scope window provides:
-- Hypnogram strip with colour-coded epochs (amber = Wake, blue = NREM, green = REM)
-- CLASSIFICATION panel: six threshold spinboxes + Run Classification button
-- **Draggable threshold lines** — dotted reference lines on δ-power, EMG RMS, and T:D axes; drag up/down to adjust thresholds live (spinboxes sync, and vice-versa)
-- LABELING panel: state counts, W/N/R/U buttons, undo/redo, save/export
-- Click or Shift+click epochs in the hypnogram to select; Cmd/Ctrl+click to toggle
-- Press **W / N / R / U** to relabel selected epochs; **Cmd/Ctrl+Z/Y** to undo/redo
-- **`?` button** — opens a step-by-step scoring guide with all keyboard shortcuts
-
-## Running the Viewer
-
-After installation, launch the interactive scorer from the project root:
-
-```bash
-python run_scope.py                  # open empty — load a file from inside the viewer
-python run_scope.py path/to/file.edf # load a specific recording on startup
-```
-
-Or use the installed CLI command (requires `pip install -e .`):
-
-```bash
-sleep-scope
-sleep-scope path/to/file.edf
-```
-
-Or as a module:
-
-```bash
-python -m sleep_tools [path_to_edf]
-```
 
 ## Example Scripts
 
