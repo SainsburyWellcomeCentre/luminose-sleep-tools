@@ -1884,8 +1884,7 @@ class Scope:
             else:
                 ax.set_ylim(-sig.y_half, sig.y_half)
 
-        # ── Hypnogram strip (static pcolormesh + animated playhead) ──────────
-        hyp_playhead = None
+        # ── Hypnogram strip (static pcolormesh, scrolls with signal window) ──
         if draw_hyp:
             th = DARK_THEME
             n_epochs = len(session.labels)  # type: ignore[union-attr]
@@ -1918,7 +1917,7 @@ class Scope:
                 x_edges, y_edges, color_vals,
                 cmap=cmap, vmin=-0.5, vmax=3.5, shading="flat",
             )
-            hyp_ax.set_xlim(0.0, total_dur)
+            hyp_ax.set_xlim(t_start, t_start + x_window)
             hyp_ax.set_ylim(0.0, 1.0)
 
             # Legend
@@ -1934,12 +1933,6 @@ class Scope:
                 labelcolor=th.text,
             )
 
-            # Animated playhead (vertical line showing current window centre)
-            (hyp_playhead,) = hyp_ax.plot(
-                [t_start, t_start], [0.0, 1.0],
-                color="white", lw=1.2, zorder=10,
-            )
-
         # ── Animation ────────────────────────────────────────────────────────
         dt = speed / fps
         total_frames = int((t_end - t_start) * fps / speed)
@@ -1953,14 +1946,13 @@ class Scope:
                 t1 = t0 + x_window
 
                 for ax, sig, line in zip(axes, sig_data, lines):
-                    i0 = np.searchsorted(sig.times, t0, side="left")
-                    i1 = np.searchsorted(sig.times, t1, side="right")
+                    i0 = max(0, np.searchsorted(sig.times, t0, side="left") - 1)
+                    i1 = min(len(sig.times), np.searchsorted(sig.times, t1, side="right") + 1)
                     line.set_data(sig.times[i0:i1], sig.values[i0:i1])
                     ax.set_xlim(t0, t1)
 
-                if hyp_playhead is not None:
-                    t_mid = (t0 + t1) / 2.0
-                    hyp_playhead.set_xdata([t_mid, t_mid])
+                if hyp_ax is not None:
+                    hyp_ax.set_xlim(t0, t1)
 
                 writer.grab_frame()
                 if (i + 1) % n_frames_report == 0 or i == total_frames - 1:
