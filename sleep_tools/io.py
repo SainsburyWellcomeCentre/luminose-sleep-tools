@@ -221,6 +221,51 @@ class SleepRecording:
             }
         return info
 
+    def ttl_events(self) -> dict[str, dict[str, np.ndarray]]:
+        """Extract TTL pulse events from the paired TSV annotations.
+
+        The Luminose TSV logs each TTL edge once per recording channel
+        (EEG1, EEG2, EMG) at the same timestamp; this method deduplicates
+        those entries so each event appears exactly once.
+
+        Returns
+        -------
+        dict
+            Keys are TTL names (e.g. ``"TTL 3"``).  Each value is a dict
+            with keys ``"rise"`` and ``"fall"``, both float64 arrays of
+            event times in **seconds from recording start** (the
+            ``"Time From Start"`` TSV column), sorted ascending.
+            Returns an empty dict if no annotations are loaded or no TTL
+            rows are found.
+        """
+        if self.annotations is None or self.annotations.empty:
+            return {}
+        ann = self.annotations
+        if "Annotation" not in ann.columns or "Time From Start" not in ann.columns:
+            return {}
+
+        ttl_mask = ann["Annotation"].str.match(r"TTL\s+\d+:\s+(Rise|Fall)", na=False)
+        ttl_df = ann.loc[ttl_mask, ["Time From Start", "Annotation"]].drop_duplicates()
+        if ttl_df.empty:
+            return {}
+
+        parsed = ttl_df["Annotation"].str.extract(r"(TTL\s+\d+):\s+(Rise|Fall)")
+        ttl_df = ttl_df.copy()
+        ttl_df["_name"] = parsed[0].str.strip()
+        ttl_df["_edge"] = parsed[1]
+
+        result: dict[str, dict[str, np.ndarray]] = {}
+        for ttl_name, grp in ttl_df.groupby("_name"):
+            result[str(ttl_name)] = {
+                "rise": np.sort(
+                    grp.loc[grp["_edge"] == "Rise", "Time From Start"].to_numpy(dtype=float)
+                ),
+                "fall": np.sort(
+                    grp.loc[grp["_edge"] == "Fall", "Time From Start"].to_numpy(dtype=float)
+                ),
+            }
+        return result
+
     def __repr__(self) -> str:
         return (
             f"SleepRecording(animal={self.animal_id!r}, "
@@ -377,6 +422,10 @@ def save_to_h5(
             Time_From_Start
             Channel
             Annotation
+        /ttl_events/                ← TTL pulse times (if TTL rows present in TSV)
+            TTL_3/                    one sub-group per TTL name
+                rise_times          ← float64 array, seconds from recording start
+                fall_times          ← float64 array, seconds from recording start
     """
     try:
         import h5py
@@ -542,5 +591,24 @@ def save_to_h5(
                         data=_str_array(col_data.fillna("").astype(str).to_numpy()),
                         dtype=str_dt,
                     )
+
+        # /ttl_events/ — deduplicated TTL pulse times per TTL name
+        ttl_data = recording.ttl_events()
+        if ttl_data:
+            ttl_grp = f.create_group("ttl_events")
+            ttl_grp.attrs["units"] = "s"
+            ttl_grp.attrs["description"] = (
+                "TTL pulse event times (seconds from recording start); "
+                "deduplicated across recording channels"
+            )
+            for ttl_name, edges in ttl_data.items():
+                safe = ttl_name.replace(" ", "_")
+                ch_grp = ttl_grp.create_group(safe)
+                r_ds = ch_grp.create_dataset("rise_times", data=edges["rise"])
+                r_ds.attrs["units"] = "s"
+                r_ds.attrs["description"] = "Rising-edge times (s from recording start)"
+                f_ds = ch_grp.create_dataset("fall_times", data=edges["fall"])
+                f_ds.attrs["units"] = "s"
+                f_ds.attrs["description"] = "Falling-edge times (s from recording start)"
 
     return path.resolve()

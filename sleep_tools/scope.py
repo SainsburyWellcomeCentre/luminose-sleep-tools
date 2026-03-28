@@ -209,6 +209,25 @@ def _apply_ax_style(ax, sig: _SignalData, theme: Theme) -> None:
                   ha="right", va="center", multialignment="center")
 
 
+def _pair_ttl_visible(
+    rise_times: np.ndarray,
+    fall_times: np.ndarray,
+    t0: float,
+    t1: float,
+):
+    """Yield clipped ``(r, f)`` pairs for TTL HIGH periods that overlap ``[t0, t1]``.
+
+    Each rise is paired with the immediately following fall.  Periods that
+    start before ``t0`` or extend past ``t1`` are clipped to the window.
+    """
+    for r in rise_times:
+        later = fall_times[fall_times > r]
+        f = float(later[0]) if len(later) > 0 else float("inf")
+        # Overlap test: [r, f] overlaps [t0, t1] iff r < t1 and f > t0
+        if r < t1 and f > t0:
+            yield float(max(r, t0)), float(min(f, t1))
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -259,7 +278,7 @@ class Scope:
             QScrollBar, QLabel, QDoubleSpinBox, QPushButton, QSizePolicy,
             QGroupBox, QGridLayout, QSpacerItem, QCheckBox, QScrollArea,
             QSlider, QComboBox, QToolButton, QMenu, QFileDialog, QFrame,
-            QListWidget, QListWidgetItem, QInputDialog,
+            QListWidget, QListWidgetItem, QInputDialog, QAbstractSpinBox,
         )
         from PySide6.QtCore import Qt, QTimer, QSize, QPoint
         from PySide6.QtGui import QPalette, QColor, QGuiApplication, QAction, QIcon, QActionGroup
@@ -299,6 +318,7 @@ class Scope:
                 
                 # Internal widget caches
                 self_w._yscale_spins = {}
+                self_w._lockable_widgets: list = []  # disabled during playback
 
                 # ── Scoring state ──────────────────────────────────────
                 self_w._session: ScoringSession | None = None
@@ -321,6 +341,22 @@ class Scope:
                 self_w._drag_display_to_val: float | None = None
                 self_w._drag_cids: list = []
 
+                # ── TTL event display state ────────────────────────────
+                self_w._ttl_show_strips: bool = True   # semi-transparent rise→fall spans
+                self_w._ttl_show_rise:   bool = False  # dotted lines at rising edges
+                self_w._ttl_show_fall:   bool = False  # dotted lines at falling edges
+                self_w._ttl_artists: list = []          # matplotlib artists for cleanup
+                self_w._ttl_data: dict = {}             # cached from recording.ttl_events()
+                # Per-axis collection references for in-place updates (avoids rebuilding on each draw)
+                self_w._ttl_strip_colls: list = []
+                self_w._ttl_rise_colls: list = []
+                self_w._ttl_fall_colls: list = []
+                # Pre-sorted TTL arrays (computed once in _rebuild_ttl_artists)
+                self_w._ttl_strips_r: np.ndarray = np.array([])
+                self_w._ttl_strips_f: np.ndarray = np.array([])
+                self_w._ttl_rises_all: np.ndarray = np.array([])
+                self_w._ttl_falls_all: np.ndarray = np.array([])
+
                 self_w.setWindowTitle("Sleep Scope")
                 self_w.resize(1280, 800)
                 
@@ -342,6 +378,8 @@ class Scope:
                 self_w._visible = {s.name for s in self_w._signal_data}
                 # Keep _vis_signals in sync so stale scrollbar events don't KeyError
                 self_w._vis_signals = list(self_w._signal_data)
+                # Cache TTL events once per recording load (avoid per-frame parsing)
+                self_w._ttl_data = rec.ttl_events() if rec is not None else {}
                 if rec:
                     self_w.setWindowTitle(f"Sleep Scope — {rec.animal_id} ({rec.start_datetime})")
                 else:
@@ -353,7 +391,7 @@ class Scope:
                 for role, col in [
                     (QPalette.ColorRole.Window, theme.bg), (QPalette.ColorRole.WindowText, theme.text),
                     (QPalette.ColorRole.Base, theme.panel), (QPalette.ColorRole.AlternateBase, theme.border),
-                    (QPalette.ColorRole.Text, theme.text), (QPalette.ColorRole.Button, theme.panel),
+                    (QPalette.ColorRole.Text, theme.text), (QPalette.ColorRole.Button, theme.border),
                     (QPalette.ColorRole.ButtonText, theme.text), (QPalette.ColorRole.Highlight, theme.accent),
                 ]: pal.setColor(role, QColor(col))
                 self_w.setPalette(pal)
@@ -373,9 +411,18 @@ class Scope:
                     QDoubleSpinBox, QSpinBox {{
                         background:{theme.panel}; color:{theme.text};
                         border:1px solid {theme.border}; border-radius:3px;
-                        padding:1px 2px; selection-background-color:{theme.accent};
+                        padding:2px 4px; min-height:26px;
+                        selection-background-color:{theme.accent};
                     }}
                     QDoubleSpinBox:focus, QSpinBox:focus {{ border-color:{theme.accent}; }}
+                    QDoubleSpinBox::up-button, QSpinBox::up-button,
+                    QDoubleSpinBox::down-button, QSpinBox::down-button {{
+                        width:22px; background:{theme.border};
+                    }}
+                    QDoubleSpinBox::up-button:hover, QSpinBox::up-button:hover,
+                    QDoubleSpinBox::down-button:hover, QSpinBox::down-button:hover {{
+                        background:{theme.accent};
+                    }}
                     QComboBox {{
                         background:{theme.panel}; color:{theme.text};
                         border:1px solid {theme.border}; border-radius:3px; padding:1px 4px;
@@ -481,6 +528,7 @@ class Scope:
                 tl.addWidget(self_w._speed_slider)
 
                 self_w._scrollbar = QScrollBar(Qt.Orientation.Horizontal)
+                self_w._scrollbar.setFocusPolicy(Qt.FocusPolicy.NoFocus)
                 self_w._scrollbar.valueChanged.connect(self_w._on_scroll)
                 tl.addWidget(self_w._scrollbar, stretch=1)
 
@@ -577,6 +625,47 @@ class Scope:
                     rl.addWidget(a_btn)
                 l.addWidget(rec_box)
 
+                # ── TTL EVENTS panel (only when triggers are present) ───
+                if self_w._recording and self_w._ttl_data:
+                    ttl_box = QGroupBox("TTL EVENTS")
+                    ttl_l = QVBoxLayout(ttl_box)
+                    ttl_l.setSpacing(4)
+
+                    # Summary line: total unique rise/fall counts across all TTL types
+                    total_r = sum(len(ev["rise"]) for ev in self_w._ttl_data.values())
+                    total_f = sum(len(ev["fall"]) for ev in self_w._ttl_data.values())
+                    info_lbl = QLabel(f"TTL: {total_r} rise,  {total_f} fall")
+                    info_lbl.setStyleSheet(f"color:{t.muted}; font-size:10px;")
+                    ttl_l.addWidget(info_lbl)
+
+                    def _make_ttl_cb(label: str, attr: str, checked: bool, tip: str):
+                        cb = QCheckBox(label)
+                        cb.setChecked(checked)
+                        cb.setToolTip(tip)
+                        # NoFocus: clicking does NOT steal keyboard focus, so Space
+                        # continues to trigger play/pause via the window keyPressEvent.
+                        cb.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+                        def _on_toggle(v, _attr=attr):
+                            setattr(self_w, _attr, v)
+                            self_w._rebuild_ttl_artists()
+                            self_w._canvas.draw_idle()
+                        cb.toggled.connect(_on_toggle)
+                        return cb
+
+                    for _lbl, _attr, _chk, _tip in [
+                        ("TTL (rise → fall)", "_ttl_show_strips", self_w._ttl_show_strips,
+                         "Semi-transparent span across each channel for every TTL HIGH period."),
+                        ("Rising Edges",      "_ttl_show_rise",   self_w._ttl_show_rise,
+                         "Dotted vertical line at each rising edge."),
+                        ("Falling Edges",     "_ttl_show_fall",   self_w._ttl_show_fall,
+                         "Dotted vertical line at each falling edge."),
+                    ]:
+                        _cb = _make_ttl_cb(_lbl, _attr, _chk, _tip)
+                        ttl_l.addWidget(_cb)
+                        self_w._lockable_widgets.append(_cb)
+
+                    l.addWidget(ttl_box)
+
                 # ── CLASSIFICATION panel ───────────────────────────────
                 if self_w._recording:
                     cls_box = QGroupBox("CLASSIFICATION")
@@ -609,8 +698,8 @@ class Scope:
                         spin.setRange(lo, hi)
                         spin.setDecimals(1)
                         spin.setValue(default)
-                        spin.setFixedWidth(76)
-                        spin.setStyleSheet(f"color:{t.text}; font-size:10px;")
+                        spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.PlusMinus)
+                        spin.setFixedWidth(96)
                         self_w._thr_spins[key] = spin
                         if self_w._thr_lines_active:
                             spin.valueChanged.connect(
@@ -759,12 +848,15 @@ class Scope:
                 clear_btn.clicked.connect(self_w._on_clear_channels)
                 l.addWidget(clear_btn)
 
+                # Apply play-lock state to any newly created widgets
+                self_w._set_controls_enabled(not self_w._playing)
+
             def _show_time_menu(self_w):
                 menu = QMenu(self_w)
                 
                 # Window Width Submenu
                 win_menu = menu.addMenu("Visible Window")
-                for val in [5, 10, 30, 60, 300, 600]:
+                for val in [5, 10, 30, 60]:
                     act = win_menu.addAction(f"{val}s")
                     act.triggered.connect(lambda _, v=val: self_w._on_window_changed(v))
                 
@@ -809,6 +901,7 @@ class Scope:
                     item = self_w._left_layout.takeAt(0)
                     if item.widget(): item.widget().deleteLater()
                 self_w._yscale_spins = {}
+                self_w._lockable_widgets = []  # reset on each figure rebuild
 
                 self_w._vis_signals = [s for s in self_w._signal_data if s.name in self_w._visible]
                 n = len(self_w._vis_signals)
@@ -878,7 +971,7 @@ class Scope:
                     spin = QDoubleSpinBox()
                     spin.setRange(1e-12, 1e12); spin.setDecimals(1)
                     spin.setValue(self_w._y_scales[sig.name])
-                    spin.setStyleSheet(f"color:{t.muted}; font-size:10px; height:20px;")
+                    spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.PlusMinus)
                     spin.valueChanged.connect(lambda v, n=sig.name: self_w._on_yscale_changed(n, v))
                     self_w._yscale_spins[sig.name] = spin
                     spin_row.addWidget(spin, stretch=1)
@@ -889,18 +982,19 @@ class Scope:
                     unit_combo.addItems(u_list)
                     unit_combo.setCurrentText(sig.unit)
                     unit_combo.setFixedWidth(60)
-                    unit_combo.setStyleSheet(f"color:{t.muted}; font-size:10px; height:20px;")
                     unit_combo.currentTextChanged.connect(lambda u, n=sig.name: self_w._on_signal_unit_changed(n, u))
                     spin_row.addWidget(unit_combo)
                     cll.addLayout(spin_row)
-                    
+
                     opt_btn = QToolButton()
                     opt_btn.setText("Optimize Scale")
                     opt_btn.setStyleSheet("font-size:10px; padding:2px;")
                     opt_btn.clicked.connect(lambda _, n=sig.name: self_w._optimize_channel(n))
                     cll.addWidget(opt_btn)
-                    
+
                     self_w._left_layout.addWidget(ctrl)
+                    # Track for play-lock
+                    self_w._lockable_widgets.extend([spin, unit_combo, x_btn, opt_btn])
                 
                 # Add "Add Channel" button at the bottom of left panel
                 if self_w._recording:
@@ -932,10 +1026,20 @@ class Scope:
 
                 self_w._time_label.setText(f"Time ({self_w._time_unit})")
                 self_w._draw(self_w._t0)
+                self_w._rebuild_ttl_artists()
                 if self_w._thr_lines_active and self_w._session is not None:
                     self_w._draw_threshold_lines()
                     self_w._connect_thr_drag_events()
-                    self_w._canvas.draw_idle()
+                self_w._set_controls_enabled(not self_w._playing)
+                self_w._canvas.draw_idle()
+
+            def _set_controls_enabled(self_w, enabled: bool) -> None:
+                """Enable or disable interactive controls (called when play state changes)."""
+                for w in self_w._lockable_widgets:
+                    try:
+                        w.setEnabled(enabled)
+                    except RuntimeError:
+                        pass  # widget already deleted during a figure rebuild
 
             def _on_signal_unit_changed(self_w, name, new_unit):
                 sig = next((s for s in self_w._signal_data if s.name == name), None)
@@ -989,6 +1093,10 @@ class Scope:
                         # sharex=True keeps xlim in sync; just update the viewport line
                         self_w._hypno_ax.set_xlim(t0, t1)
 
+                # Update TTL overlays to only show the visible slice (O(log N + K))
+                if self_w._ttl_data:
+                    self_w._refresh_ttl_visible(t0, t1)
+
                 self_w._canvas.draw_idle()
 
             def _on_scroll(self_w, value: int):
@@ -997,6 +1105,7 @@ class Scope:
             def _on_play_pause(self_w):
                 self_w._playing = not self_w._playing
                 self_w._play_btn.setText("⏸" if self_w._playing else "▶")
+                self_w._set_controls_enabled(not self_w._playing)
                 if self_w._playing: self_w._timer.start()
                 else: self_w._timer.stop()
 
@@ -1105,6 +1214,15 @@ class Scope:
                 self_w._sel_indices = set()
                 self_w._sel_anchor = None
                 self_w._hypno_ax = None
+                self_w._ttl_data = {}
+                self_w._ttl_artists = []
+                self_w._ttl_strip_colls = []
+                self_w._ttl_rise_colls = []
+                self_w._ttl_fall_colls = []
+                self_w._ttl_strips_r = np.array([])
+                self_w._ttl_strips_f = np.array([])
+                self_w._ttl_rises_all = np.array([])
+                self_w._ttl_falls_all = np.array([])
                 self_w.setWindowTitle("Sleep Scope — No Data")
                 self_w._update_scrollbar_range()
                 if hasattr(self_w, "_scrollbar"):
@@ -1538,6 +1656,155 @@ class Scope:
                 self_w._draw_threshold_lines()
                 self_w._canvas.draw_idle()
 
+            # ── TTL overlays ───────────────────────────────────────────
+
+            def _rebuild_ttl_artists(self_w) -> None:
+                """Create persistent (initially empty) TTL overlay collections and cache data.
+
+                Called once after ``_rebuild_figure()`` and on checkbox toggle.
+                Collections are created empty and filled per-frame by
+                ``_refresh_ttl_visible()`` — only the slice visible in the
+                current x-window is ever passed to the renderer, keeping
+                scroll/play performance O(visible events) instead of O(total).
+                """
+                from matplotlib.collections import PolyCollection as _PolyC, LineCollection as _LineC
+
+                for art in self_w._ttl_artists:
+                    try:
+                        art.remove()
+                    except Exception:
+                        pass
+                self_w._ttl_artists = []
+                self_w._ttl_strip_colls = []
+                self_w._ttl_rise_colls = []
+                self_w._ttl_fall_colls = []
+
+                if not self_w._axes or not self_w._ttl_data:
+                    self_w._ttl_strips_r = np.array([])
+                    self_w._ttl_strips_f = np.array([])
+                    self_w._ttl_rises_all = np.array([])
+                    self_w._ttl_falls_all = np.array([])
+                    return
+                if not (self_w._ttl_show_strips or self_w._ttl_show_rise or self_w._ttl_show_fall):
+                    return
+
+                _STRIP_COLOR = "#e3b341"   # amber  — TTL HIGH period fill
+                _RISE_COLOR  = "#3fb950"   # green  — rising-edge marker
+                _FALL_COLOR  = "#ff7b72"   # red    — falling-edge marker
+
+                # ── Pre-compute and cache sorted arrays (once per rebuild) ──
+                all_rise = np.sort(np.concatenate(
+                    [ev["rise"] for ev in self_w._ttl_data.values()]
+                ))
+                all_fall = np.sort(np.concatenate(
+                    [ev["fall"] for ev in self_w._ttl_data.values()]
+                ))
+                self_w._ttl_rises_all = all_rise
+                self_w._ttl_falls_all = all_fall
+
+                # Pair each rise with its immediately following fall
+                strips_r, strips_f = [], []
+                for r in all_rise:
+                    later = all_fall[all_fall > r]
+                    f = float(later[0]) if len(later) > 0 else float("inf")
+                    if np.isfinite(f):
+                        strips_r.append(float(r))
+                        strips_f.append(float(f))
+                self_w._ttl_strips_r = np.array(strips_r)
+                self_w._ttl_strips_f = np.array(strips_f)
+
+                has_strips = self_w._ttl_show_strips and len(strips_r) > 0
+                has_rise   = self_w._ttl_show_rise   and len(all_rise) > 0
+                has_fall   = self_w._ttl_show_fall   and len(all_fall) > 0
+
+                # ── Create one empty collection per axis per type ──────────
+                for ax in self_w._axes:
+                    xform = ax.get_xaxis_transform()  # x=data coords, y=axes coords
+
+                    if has_strips:
+                        coll = _PolyC(
+                            [], facecolors=_STRIP_COLOR, alpha=0.15,
+                            linewidth=0, zorder=1, transform=xform,
+                        )
+                        ax.add_collection(coll)
+                        self_w._ttl_strip_colls.append(coll)
+                        self_w._ttl_artists.append(coll)
+                    else:
+                        self_w._ttl_strip_colls.append(None)
+
+                    if has_rise:
+                        coll = _LineC(
+                            [], colors=_RISE_COLOR,
+                            linestyles=":", linewidth=1.0, alpha=0.85,
+                            zorder=2, transform=xform,
+                        )
+                        ax.add_collection(coll)
+                        self_w._ttl_rise_colls.append(coll)
+                        self_w._ttl_artists.append(coll)
+                    else:
+                        self_w._ttl_rise_colls.append(None)
+
+                    if has_fall:
+                        coll = _LineC(
+                            [], colors=_FALL_COLOR,
+                            linestyles=":", linewidth=1.0, alpha=0.85,
+                            zorder=2, transform=xform,
+                        )
+                        ax.add_collection(coll)
+                        self_w._ttl_fall_colls.append(coll)
+                        self_w._ttl_artists.append(coll)
+                    else:
+                        self_w._ttl_fall_colls.append(None)
+
+                # Populate for the current scroll position
+                self_w._refresh_ttl_visible(self_w._t0, self_w._t0 + self_w._x_window)
+
+            def _refresh_ttl_visible(self_w, t0: float, t1: float) -> None:
+                """Update TTL collections to only contain events in [t0, t1].
+
+                Called on every ``_draw`` tick — uses ``np.searchsorted`` so the
+                cost is O(log N + K) where K is the number of visible events.
+                """
+                if not (self_w._ttl_strip_colls or self_w._ttl_rise_colls or self_w._ttl_fall_colls):
+                    return
+
+                # ── Strips (overlap: r < t1 and f > t0) ───────────────────
+                if self_w._ttl_strip_colls and len(self_w._ttl_strips_r):
+                    sr = self_w._ttl_strips_r
+                    sf = self_w._ttl_strips_f
+                    mask = (sr < t1) & (sf > t0)
+                    vis_r = sr[mask]
+                    vis_f = sf[mask]
+                    strip_verts = [
+                        [(r, 0), (f, 0), (f, 1), (r, 1)]
+                        for r, f in zip(vis_r.tolist(), vis_f.tolist())
+                    ]
+                    for coll in self_w._ttl_strip_colls:
+                        if coll is not None:
+                            coll.set_paths(strip_verts)
+
+                # ── Rising edges ───────────────────────────────────────────
+                if self_w._ttl_rise_colls and len(self_w._ttl_rises_all):
+                    ar = self_w._ttl_rises_all
+                    i0 = int(np.searchsorted(ar, t0, side="left"))
+                    i1 = int(np.searchsorted(ar, t1, side="right"))
+                    vis = ar[i0:i1]
+                    segs = [[(float(t), 0), (float(t), 1)] for t in vis]
+                    for coll in self_w._ttl_rise_colls:
+                        if coll is not None:
+                            coll.set_segments(segs)
+
+                # ── Falling edges ──────────────────────────────────────────
+                if self_w._ttl_fall_colls and len(self_w._ttl_falls_all):
+                    af = self_w._ttl_falls_all
+                    i0 = int(np.searchsorted(af, t0, side="left"))
+                    i1 = int(np.searchsorted(af, t1, side="right"))
+                    vis = af[i0:i1]
+                    segs = [[(float(t), 0), (float(t), 1)] for t in vis]
+                    for coll in self_w._ttl_fall_colls:
+                        if coll is not None:
+                            coll.set_segments(segs)
+
             # ── Help dialog ────────────────────────────────────────────
 
             def _show_help_dialog(self_w) -> None:
@@ -1702,6 +1969,9 @@ class Scope:
                         self_w.keyPressEvent(event)
                         return True
                     if event.type() == QEvent.Type.Wheel:
+                        # Disable wheel scroll while playing — let the play timer drive position.
+                        if self_w._playing:
+                            return True
                         # Proportional scroll: 120 units = one mouse-wheel notch = 15% of window.
                         # Trackpad sends many small deltas so it accumulates naturally and stops
                         # immediately when the gesture ends (no fixed jumps).
@@ -1768,12 +2038,46 @@ class Scope:
 
                 super().keyPressEvent(event)
 
+        from PySide6.QtCore import QObject as _QObject
+        from PySide6.QtWidgets import QAbstractSpinBox as _QSpin, QLineEdit as _QLine
+
+        class _NavKeyFilter(_QObject):
+            """App-level filter that routes navigation keys to the scope window.
+
+            Intercepts Left/Right/Space/brackets/PageUp/PageDown regardless of
+            which widget currently has focus, UNLESS an input widget (spinbox,
+            line-edit) has focus — so those widgets still work normally.
+            """
+            _NAV_KEYS = {
+                Qt.Key.Key_Left, Qt.Key.Key_Right,
+                Qt.Key.Key_BracketLeft, Qt.Key.Key_BracketRight,
+                Qt.Key.Key_PageUp, Qt.Key.Key_PageDown,
+                Qt.Key.Key_Space,
+            }
+
+            def __init__(self, win: "_ScopeWindow") -> None:
+                super().__init__(win)  # parent=win → auto-deleted with window
+                self._win = win
+
+            def eventFilter(self, obj, event):  # type: ignore[override]
+                from PySide6.QtCore import QEvent
+                if event.type() == QEvent.Type.KeyPress:
+                    if event.key() in self._NAV_KEYS:
+                        focused = QApplication.focusWidget()
+                        # Let spinboxes / line-edits handle their own keys
+                        if not isinstance(focused, (_QSpin, _QLine)):
+                            self._win.keyPressEvent(event)
+                            return True
+                return False
+
         app: QApplication = QApplication.instance() or QApplication(sys.argv)  # type: ignore[assignment]
         # Fusion style draws spinbox/combobox arrows using QPalette ButtonText color,
         # which gives white arrows on dark backgrounds and black arrows on light ones.
         app.setStyle("Fusion")
         win = _ScopeWindow(self.recording, self.analyzer)
         win.show()
+        _nav_filter = _NavKeyFilter(win)
+        app.installEventFilter(_nav_filter)
         app.exec()
 
     # ------------------------------------------------------------------

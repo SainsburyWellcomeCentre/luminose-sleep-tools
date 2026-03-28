@@ -98,11 +98,31 @@ Renders a scrolling MP4 video using `matplotlib.animation.FFMpegWriter`.
 | `emg_rms` | analyzer | µV |
 | `td_ratio` | analyzer | dimensionless |
 
+## TTL Events
+
+`recording.ttl_events()` → `dict[str, dict[str, np.ndarray]]` — parses the paired TSV annotations and extracts TTL pulse times.
+
+- Keys are TTL names (e.g. `"TTL 3"`); values have `"rise"` and `"fall"` float64 arrays of times in **seconds from recording start**.
+- Deduplicates cross-channel entries (TSV logs each event once per EEG/EMG channel at identical timestamps).
+- Returns `{}` if no TSV is loaded or no TTL rows are found.
+- `save_to_h5` automatically writes `/ttl_events/{TTL_N}/rise_times` and `fall_times` when TTL data is present.
+
+### TTL display in Scope
+
+When a recording with TTL events is loaded, a **TTL EVENTS** panel appears in the sidebar with:
+- **Show Strips** — semi-transparent amber spans (`axvspan`) from rise to next fall across all channel axes (default on)
+- **Rising Edges** — dotted green vertical lines at each rising edge (default off)
+- **Falling Edges** — dotted red vertical lines at each falling edge (default off)
+
+Overlays are redrawn on every scroll/play tick and removed cleanly on each redraw.
+
 ## Current Stage
 
 **Stage 1 complete** — `io.py` (incl. `save_to_h5`), `analysis.py`, `visualization.py`, `scope.py` (oscilloscope + video export) implemented and tested.
 
 **Stage 2 complete** — `scoring/state.py` (`ScoringSession`, `AutoScoreThresholds`, `STATE_COLORS`), auto-scoring (Wake→NREM→REM thresholds), hypnogram strip in Scope, keyboard hotkeys (W/N/R/U, Ctrl/Cmd+Z/Y, Space, `[`/`]`, arrows, Ctrl/Cmd+O/E), CLASSIFICATION + LABELING sidebar panels, draggable threshold lines, `?` help dialog, save JSON / export CSV / save HDF5.
+
+**Stage 3 in progress** — TTL event parsing (`recording.ttl_events()`), HDF5 export of TTL times, TTL overlay panel in Scope (strips, rising/falling edge markers).
 
 See `agent.md` → Stage Breakdown for what is complete and what is next.
 
