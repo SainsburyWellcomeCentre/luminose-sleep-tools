@@ -54,22 +54,22 @@ out.mkdir(exist_ok=True)
 
 print("Plotting raw traces (first 60 s) …")
 fig = viz.plot_raw_traces(t_start=0, t_end=60)
-fig.savefig(out / "raw_traces.png", dpi=150, bbox_inches="tight")
+fig.savefig(out / "raw_traces.png", dpi=200, bbox_inches="tight")
 plt.close(fig)
 
 print("Plotting spectrogram (EEG1) …")
 fig = viz.plot_spectrogram("EEG1", freq_max=50.0)
-fig.savefig(out / "spectrogram.png", dpi=150, bbox_inches="tight")
+fig.savefig(out / "spectrogram.png", dpi=200, bbox_inches="tight")
 plt.close(fig)
 
 print("Plotting band power time series …")
 fig = viz.plot_band_timeseries("EEG1")
-fig.savefig(out / "band_power.png", dpi=150, bbox_inches="tight")
+fig.savefig(out / "band_power.png", dpi=200, bbox_inches="tight")
 plt.close(fig)
 
 print("Plotting overview figure …")
 fig = viz.plot_overview("EEG1")
-fig.savefig(out / "overview.png", dpi=150, bbox_inches="tight")
+fig.savefig(out / "overview.png", dpi=200, bbox_inches="tight")
 plt.close(fig)
 
 print(f"\nFigures saved to {out.resolve()}/")
