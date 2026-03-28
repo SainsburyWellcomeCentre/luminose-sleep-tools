@@ -11,6 +11,7 @@ For signal processing details and scoring workflow see [how_to_score.md](how_to_
 - **EDF I/O**: use `mne.io.read_raw_edf` (not pyedf)
 - **GUI framework**: PySide6
 - **Data**: example recordings in `example_data/luminose/`
+- **Main entry point**: `python run_scope.py` or `sleep-scope` (CLI after `pip install -e .`) or `python -m sleep_tools`
 
 ## Coding Rules
 

@@ -216,6 +216,28 @@ The Scope window provides:
 - Press **W / N / R / U** to relabel selected epochs; **Cmd/Ctrl+Z/Y** to undo/redo
 - **`?` button** — opens a step-by-step scoring guide with all keyboard shortcuts
 
+## Running the Viewer
+
+After installation, launch the interactive scorer from the project root:
+
+```bash
+python run_scope.py                  # open empty — load a file from inside the viewer
+python run_scope.py path/to/file.edf # load a specific recording on startup
+```
+
+Or use the installed CLI command (requires `pip install -e .`):
+
+```bash
+sleep-scope
+sleep-scope path/to/file.edf
+```
+
+Or as a module:
+
+```bash
+python -m sleep_tools [path_to_edf]
+```
+
 ## Example Scripts
 
 ```bash
