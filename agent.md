@@ -278,6 +278,8 @@ Tasks:
 13. Full keyboard navigation: Space (play/pause), `[`/`]` + PageUp/Down (page), `←`/`→` (fine scroll), mouse-wheel (proportional scroll), Ctrl/Cmd+O (open folder), Ctrl/Cmd+E (open file) ✅
 14. `?` help button (transport bar, leftmost): scrollable step-by-step dialog; modifier key names are platform-aware (Cmd on macOS, Ctrl elsewhere) ✅
 15. Fusion Qt style set at app init: ensures spinbox/combobox arrows use palette colors (white in dark theme, black in light theme) ✅
+16. **Centre signals**: `⊕` transport button + `C` key centres all visible channels on their visible-window mean (stored as per-channel y-offset in `_y_offsets`); per-channel `⊕` icon in channel header row centres that channel only; **Optimize Scale** resets offset to 0 ✅
+17. **Resizable panels via QSplitter**: left channel panel, centre canvas, and right sidebar are separated by draggable `QSplitter` handles (`_inner_splitter`, `_outer_splitter`); `time_row` uses a `_time_spacer` widget whose width tracks the inner splitter so the x-axis label stays canvas-centred; `_toggle_sidebar` uses `setSizes` to save/restore sidebar width ✅
 
 Key classes:
 - `ScoringSession(recording, epoch_len=5.0)` — exported from `sleep_tools`

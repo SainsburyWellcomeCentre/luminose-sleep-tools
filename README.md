@@ -74,8 +74,9 @@ The window features:
 - **Page navigation** — `<` / `>` buttons, or `[` / `]` keys, or PageUp / PageDown.
 - **Fine scroll** — `←` / `→` keys (10 % of visible window per press).
 - **Time Window** — Adjust visible width (0.1 – 3600 s) via the `⌛` menu.
-- **Per-channel controls** — Amplitude spinbox, unit selector, and Optimize Scale button for each trace.
-- **Channel Toggle** — Click `−` next to any channel to hide it; re-add via **+ Add Channel**.
+- **Per-channel controls** — Amplitude spinbox, unit selector, and Optimize Scale button for each trace. `⊕` icon in the channel header centres that trace on its visible mean; `−` hides it.
+- **Centre signals** — `⊕` button in the transport bar (or press `C`) centres all visible channels on their visible mean simultaneously. Per-channel `⊕` in the header row does the same for one channel. Clicking **Optimize Scale** resets that channel's offset back to zero baseline.
+- **Resizable panels** — Drag the splitter handles between the left channel panel, the centre canvas, and the right sidebar to resize them freely. The sidebar toggle (`☰`) collapses/restores the sidebar while remembering its last width.
 - **Y-Axis Labels** — Shows current unit (e.g. `µV`, `µV²/Hz`); updates automatically.
 - **Theme** — `☯` button toggles dark / light. Spinbox and combobox arrows adapt to the theme (white on dark, black on light).
 - **? Help** — Leftmost transport button; step-by-step scoring guide with platform-aware shortcuts (Cmd on macOS).

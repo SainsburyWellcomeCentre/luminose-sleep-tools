@@ -1,10 +1,11 @@
-"""Render a real-time scrolling video of an arbitrary 20 s epoch.
+"""Render real-time scrolling videos in dark and light themes.
 
 Run:
     conda run -n sleep-tools python examples/scope_video.py
 
 Adjust T1 and T2 to select any 20 s window within the recording.
-Output is saved to output/<animal_id>_scope_epoch.mp4 in the cwd.
+Outputs are saved to output/<animal_id>_scope_epoch_dark.mp4 and
+output/<animal_id>_scope_epoch_light.mp4 in the cwd.
 
 Requires ffmpeg on PATH:
     conda install -c conda-forge ffmpeg
@@ -30,10 +31,7 @@ session.auto_score(features, AutoScoreThresholds())
 
 scope = Scope(rec, ana)
 
-out = Path("output") / f"{rec.animal_id}_scope_epoch.mp4"
-
-path = scope.make_video(
-    out,
+SHARED = dict(
     signals=["EEG1", "EEG2", "EMG", "delta_power", "emg_rms", "td_ratio"],
     t_start=T1,
     t_end=T2,
@@ -44,4 +42,13 @@ path = scope.make_video(
     session=session,         # adds colour-coded sleep stage strip
     show_hypnogram=True,     # True by default — pass False to omit
 )
-print(f"Saved: {path}")
+
+# ── Dark theme (default) ──────────────────────────────────────────────────────
+dark_out = Path("output") / f"{rec.animal_id}_scope_epoch_dark.mp4"
+path = scope.make_video(dark_out, theme="dark", **SHARED)
+print(f"Saved (dark):  {path}")
+
+# ── Light theme ───────────────────────────────────────────────────────────────
+light_out = Path("output") / f"{rec.animal_id}_scope_epoch_light.mp4"
+path = scope.make_video(light_out, theme="light", **SHARED)
+print(f"Saved (light): {path}")

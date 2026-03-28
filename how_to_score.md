@@ -345,6 +345,16 @@ Scrolling workflow:
 - The **window width** spinbox sets how many seconds are visible at once (try 60–300 s for overview, 15–30 s for detailed inspection).
 - The hypnogram strip at the top always shows the full recording; the shaded region shows the current window.
 
+Centering drifted signals:
+- Press **C** (or click **⊕** in the transport bar) to centre all visible signals on their current-window mean — useful when a DC offset or drift pushes a trace out of view.
+- Click the **⊕** icon in a channel's header row to centre only that channel.
+- Click **Optimize Scale** to reset both the amplitude scale and the offset for that channel.
+
+Resizing panels:
+- Drag the splitter handle between the left channel-control panel and the canvas to widen or narrow the controls.
+- Drag the splitter handle between the canvas and the right sidebar to give more room to either panel.
+- The **☰** button collapses or restores the sidebar; its last width is remembered.
+
 ### 6. Inspect feature traces while scoring
 
 In the oscilloscope, you can display any combination of:

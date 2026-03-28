@@ -279,6 +279,7 @@ class Scope:
             QGroupBox, QGridLayout, QSpacerItem, QCheckBox, QScrollArea,
             QSlider, QComboBox, QToolButton, QMenu, QFileDialog, QFrame,
             QListWidget, QListWidgetItem, QInputDialog, QAbstractSpinBox,
+            QSplitter,
         )
         from PySide6.QtCore import Qt, QTimer, QSize, QPoint
         from PySide6.QtGui import QPalette, QColor, QGuiApplication, QAction, QIcon, QActionGroup
@@ -318,6 +319,7 @@ class Scope:
                 
                 # Internal widget caches
                 self_w._yscale_spins = {}
+                self_w._y_offsets: dict[str, float] = {}  # per-channel DC offset for centering
                 self_w._lockable_widgets: list = []  # disabled during playback
 
                 # ── Scoring state ──────────────────────────────────────
@@ -375,6 +377,7 @@ class Scope:
                 self_w._analyzer = ana
                 self_w._signal_data = prepare_data(rec, ana, requested)
                 self_w._y_scales = {s.name: s.y_half for s in self_w._signal_data}
+                self_w._y_offsets = {s.name: 0.0 for s in self_w._signal_data}
                 self_w._visible = {s.name for s in self_w._signal_data}
                 # Keep _vis_signals in sync so stale scrollbar events don't KeyError
                 self_w._vis_signals = list(self_w._signal_data)
@@ -429,6 +432,8 @@ class Scope:
                     }}
                     QComboBox::drop-down {{ width:14px; border-left:1px solid {theme.border}; }}
                     QComboBox QAbstractItemView {{ background:{theme.panel}; color:{theme.text}; }}
+                    QSplitter::handle {{ background:{theme.border}; }}
+                    QSplitter::handle:hover {{ background:{theme.accent}; }}
                 """)
                 
                 # Update sidebar background if it exists (avoids it staying dark in light mode)
@@ -455,34 +460,43 @@ class Scope:
                 cl.setContentsMargins(10, 10, 10, 10)
                 cl.setSpacing(4)
 
-                # Canvas + Left Controls
-                cv_row = QHBoxLayout()
-                
-                # Left sidebar for per-channel controls (aligned with Y-labels)
+                # Canvas + Left Controls (inner splitter: left panel | canvas)
                 self_w._left_panel = QWidget()
                 self_w._left_layout = QVBoxLayout(self_w._left_panel)
                 self_w._left_layout.setContentsMargins(0, 50, 0, 50)
                 self_w._left_layout.setSpacing(10)
 
-                left_scroll = QScrollArea()
-                left_scroll.setWidget(self_w._left_panel)
-                left_scroll.setWidgetResizable(True)
-                left_scroll.setFixedWidth(160)
-                left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-                left_scroll.setFrameShape(QFrame.Shape.NoFrame)
-                cv_row.addWidget(left_scroll)
+                self_w._left_scroll = QScrollArea()
+                self_w._left_scroll.setWidget(self_w._left_panel)
+                self_w._left_scroll.setWidgetResizable(True)
+                self_w._left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+                self_w._left_scroll.setFrameShape(QFrame.Shape.NoFrame)
 
                 self_w._canvas = FigureCanvas(Figure(facecolor=t.bg))
                 # Forward canvas key events to the window so our keyPressEvent
                 # handles Space/arrows/brackets even when the canvas has focus.
                 self_w._canvas.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
                 self_w._canvas.installEventFilter(self_w)
-                cv_row.addWidget(self_w._canvas, stretch=1)
-                cl.addLayout(cv_row, stretch=1)
 
-                # X-Axis area
+                self_w._inner_splitter = QSplitter(Qt.Orientation.Horizontal)
+                self_w._inner_splitter.setHandleWidth(4)
+                self_w._inner_splitter.addWidget(self_w._left_scroll)
+                self_w._inner_splitter.addWidget(self_w._canvas)
+                self_w._inner_splitter.setStretchFactor(0, 0)
+                self_w._inner_splitter.setStretchFactor(1, 1)
+                self_w._inner_splitter.setSizes([180, 900])
+                cl.addWidget(self_w._inner_splitter, stretch=1)
+
+                # X-Axis area — spacer tracks left-panel width so label stays canvas-centred
                 time_row = QHBoxLayout()
-                time_row.setContentsMargins(160, 0, 0, 0) # Offset for left panel
+                self_w._time_spacer = QWidget()
+                self_w._time_spacer.setFixedWidth(180)
+                time_row.addWidget(self_w._time_spacer)
+                self_w._inner_splitter.splitterMoved.connect(
+                    lambda pos, idx: self_w._time_spacer.setFixedWidth(
+                        self_w._inner_splitter.sizes()[0]
+                    )
+                )
                 time_row.addStretch()
                 self_w._time_label = QLabel("Time (m)")
                 time_row.addWidget(self_w._time_label)
@@ -547,6 +561,15 @@ class Scope:
                 self_w._next_btn.clicked.connect(self_w._on_next_page)
                 tl.addWidget(self_w._next_btn)
 
+                # Centre All button
+                centre_all_btn = QToolButton()
+                centre_all_btn.setText("⊕")
+                centre_all_btn.setFixedSize(32, 32)
+                centre_all_btn.setToolTip("Centre all signals on visible mean  [C]")
+                centre_all_btn.clicked.connect(self_w._centre_all_signals)
+                tl.addWidget(centre_all_btn)
+                self_w._lockable_widgets.append(centre_all_btn)
+
                 # Theme Toggle
                 self_w._theme_btn = QToolButton()
                 self_w._theme_btn.setText("☯")
@@ -565,11 +588,9 @@ class Scope:
                 tl.addWidget(self_w._sidebar_btn)
 
                 cl.addWidget(transport)
-                main_layout.addWidget(content, stretch=1)
 
                 # ── Sidebar ────────────────────────────────────────────
                 self_w._sidebar = QFrame()
-                self_w._sidebar.setFixedWidth(260)
                 self_w._sidebar.setStyleSheet(f"background:{t.panel}; border-left:1px solid {t.border};")
                 sl = QVBoxLayout(self_w._sidebar)
                 sl.setContentsMargins(0, 0, 0, 0)
@@ -586,7 +607,15 @@ class Scope:
                 
                 scroll.setWidget(self_w._sidebar_content)
                 sl.addWidget(scroll)
-                main_layout.addWidget(self_w._sidebar)
+                # Outer splitter: content | sidebar
+                self_w._outer_splitter = QSplitter(Qt.Orientation.Horizontal)
+                self_w._outer_splitter.setHandleWidth(4)
+                self_w._outer_splitter.addWidget(content)
+                self_w._outer_splitter.addWidget(self_w._sidebar)
+                self_w._outer_splitter.setStretchFactor(0, 1)
+                self_w._outer_splitter.setStretchFactor(1, 0)
+                self_w._outer_splitter.setSizes([1000, 260])
+                main_layout.addWidget(self_w._outer_splitter, stretch=1)
 
                 self_w._update_scrollbar_range()
 
@@ -879,7 +908,16 @@ class Scope:
                 menu.exec(self_w._time_btn.mapToGlobal(QPoint(0, 0)))
 
             def _toggle_sidebar(self_w):
-                self_w._sidebar.setVisible(self_w._sidebar_btn.isChecked())
+                if self_w._sidebar_btn.isChecked():
+                    sizes = self_w._outer_splitter.sizes()
+                    total = sum(sizes)
+                    w = getattr(self_w, "_saved_sidebar_width", 260)
+                    self_w._outer_splitter.setSizes([total - w, w])
+                else:
+                    sizes = self_w._outer_splitter.sizes()
+                    if sizes[1] > 0:
+                        self_w._saved_sidebar_width = sizes[1]
+                    self_w._outer_splitter.setSizes([sum(sizes), 0])
 
             def _update_scrollbar_range(self_w):
                 if not self_w._recording:
@@ -948,28 +986,41 @@ class Scope:
                     cll.setSpacing(2)
                     
                     row1 = QHBoxLayout()
+                    row1.setSpacing(2)
                     lbl = QLabel(sig.label)
                     lbl.setStyleSheet(f"color:{sig.color}; font-weight:bold; font-size:11px;")
                     row1.addWidget(lbl)
-                    row1.addSpacing(6)
+                    row1.addStretch()
+
+                    ctr_btn = QToolButton()
+                    ctr_btn.setText("⊕")
+                    ctr_btn.setFixedSize(20, 20)
+                    ctr_btn.setStyleSheet(
+                        f"QToolButton {{ color:{t.muted}; font-size:11px; padding:0px; }}"
+                    )
+                    ctr_btn.setAutoRaise(True)
+                    ctr_btn.setToolTip("Centre on visible mean")
+                    ctr_btn.clicked.connect(lambda _, n=sig.name: self_w._centre_signal(n))
+                    row1.addWidget(ctr_btn)
 
                     x_btn = QToolButton()
                     x_btn.setText("−")
+                    x_btn.setFixedSize(20, 20)
                     x_btn.setStyleSheet(
                         f"QToolButton {{ color:{t.text}; font-size:13px;"
-                        f" font-weight:bold; padding:1px 5px; }}"
+                        f" font-weight:bold; padding:0px; }}"
                     )
-                    x_btn.setAutoRaise(False)
+                    x_btn.setAutoRaise(True)
                     x_btn.setToolTip("Hide channel")
                     x_btn.clicked.connect(lambda _, n=sig.name: self_w._on_channel_removed(n))
                     row1.addWidget(x_btn)
-                    row1.addStretch()
                     cll.addLayout(row1)
-                    
+
                     # Amplitude Spinbox + Unit Selector
                     spin_row = QHBoxLayout()
                     spin = QDoubleSpinBox()
                     spin.setRange(1e-12, 1e12); spin.setDecimals(1)
+                    spin.setMaximumWidth(72)
                     spin.setValue(self_w._y_scales[sig.name])
                     spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.PlusMinus)
                     spin.valueChanged.connect(lambda v, n=sig.name: self_w._on_yscale_changed(n, v))
@@ -989,12 +1040,13 @@ class Scope:
                     opt_btn = QToolButton()
                     opt_btn.setText("Optimize Scale")
                     opt_btn.setStyleSheet("font-size:10px; padding:2px;")
+                    opt_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
                     opt_btn.clicked.connect(lambda _, n=sig.name: self_w._optimize_channel(n))
                     cll.addWidget(opt_btn)
 
                     self_w._left_layout.addWidget(ctrl)
                     # Track for play-lock
-                    self_w._lockable_widgets.extend([spin, unit_combo, x_btn, opt_btn])
+                    self_w._lockable_widgets.extend([spin, unit_combo, x_btn, opt_btn, ctr_btn])
                 
                 # Add "Add Channel" button at the bottom of left panel
                 if self_w._recording:
@@ -1075,11 +1127,12 @@ class Scope:
 
                 for ax, sig, line in zip(self_w._axes, self_w._vis_signals, self_w._lines):
                     yh = self_w._y_scales[sig.name]
+                    yoff = self_w._y_offsets.get(sig.name, 0.0)
                     i0 = np.searchsorted(sig.times, t0, side="left")
                     i1 = np.searchsorted(sig.times, t1, side="right")
                     line.set_data(sig.times[max(0, i0-1):i1+1], sig.values[max(0, i0-1):i1+1])
                     ax.set_xlim(t0, t1)
-                    ax.set_ylim(-yh, yh)
+                    ax.set_ylim(yoff - yh, yoff + yh)
                 
                 fmt = _make_time_formatter(self_w._x_window, self_w._time_unit)
                 if self_w._axes:
@@ -1209,6 +1262,7 @@ class Scope:
                 self_w._requested_signals = None
                 self_w._visible = set()
                 self_w._y_scales = {}
+                self_w._y_offsets = {}
                 self_w._t0 = 0.0
                 self_w._session = None
                 self_w._sel_indices = set()
@@ -1240,6 +1294,7 @@ class Scope:
                 tr = (self_w._t0, self_w._t0 + self_w._x_window)
                 yh = _auto_y_half(sig.values, tr, sig.times)
                 self_w._y_scales[name] = yh
+                self_w._y_offsets[name] = 0.0
                 if name in self_w._yscale_spins:
                     self_w._yscale_spins[name].setValue(yh)
                 self_w._draw(self_w._t0)
@@ -1250,6 +1305,29 @@ class Scope:
                     yh = _auto_y_half(sig.values, tr, sig.times)
                     self_w._y_scales[sig.name] = yh
                 if redraw: self_w._rebuild_figure()
+
+            def _centre_signal(self_w, name: str) -> None:
+                """Shift y-axis of one channel so its visible mean lands at 0."""
+                sig = next((s for s in self_w._vis_signals if s.name == name), None)
+                if not sig: return
+                t0, t1 = self_w._t0, self_w._t0 + self_w._x_window
+                i0 = np.searchsorted(sig.times, t0, side="left")
+                i1 = np.searchsorted(sig.times, t1, side="right")
+                window = sig.values[max(0, i0):i1]
+                mean = float(np.nanmean(window)) if len(window) > 0 else 0.0
+                self_w._y_offsets[name] = mean
+                self_w._draw(self_w._t0)
+
+            def _centre_all_signals(self_w) -> None:
+                """Shift every visible channel's y-axis so its visible mean lands at 0."""
+                t0, t1 = self_w._t0, self_w._t0 + self_w._x_window
+                for sig in self_w._vis_signals:
+                    i0 = np.searchsorted(sig.times, t0, side="left")
+                    i1 = np.searchsorted(sig.times, t1, side="right")
+                    window = sig.values[max(0, i0):i1]
+                    mean = float(np.nanmean(window)) if len(window) > 0 else 0.0
+                    self_w._y_offsets[sig.name] = mean
+                self_w._draw(self_w._t0)
 
             def _on_opt_dyn_toggled(self_w, c): self_w._opt_dynamic = c
 
@@ -1830,19 +1908,21 @@ class Scope:
                 steps = [
                     ("1  Load a recording",
                      f"<b>{_mod}+E</b> — open file  |  <b>{_mod}+O</b> — open folder<br>"
-                     "Or use Open File… / Open Folder… in the RECORDING sidebar panel."),
+                     "Or use <b>Open File…</b> / <b>Open Folder…</b> in the RECORDING sidebar panel."),
                     ("2  Analyze signals",
-                     "Click <b>Analyze Signals</b> to compute EEG power bands, EMG RMS, and the T:D ratio. Required before classification."),
+                     "Click <b>Analyze Signals</b> to compute EEG power bands, EMG RMS, and the T:D ratio. "
+                     "Required before classification."),
                     ("3  Set thresholds &amp; classify",
-                     "Adjust Wake / NREM / REM thresholds in the <b>CLASSIFICATION</b> panel, then click <b>Run Classification</b>. "
-                     "Dotted lines appear on the δ-power, EMG RMS, and T:D ratio traces."),
+                     "Adjust Wake / NREM / REM thresholds in the <b>CLASSIFICATION</b> panel, then click "
+                     "<b>Run Classification</b>. Dotted reference lines appear on the δ-power, EMG RMS, "
+                     "and T:D ratio traces."),
                     ("4  Adjust thresholds interactively",
                      "Drag any dotted reference line up or down — the spinbox updates live. "
                      "Or edit the spinbox directly and the line moves."),
                     ("5  Review the hypnogram",
                      "Click an epoch in the colour strip to select it.<br>"
-                     "• <b>Shift+click</b> for a contiguous range<br>"
-                     f"• <b>{_mod}+click</b> to toggle individual epochs"),
+                     "• <b>Shift+click</b> — contiguous range from anchor<br>"
+                     f"• <b>{_mod}+click</b> — toggle individual epochs in/out of selection"),
                     ("6  Label epochs",
                      f"<b>W / N / R / U</b> — assign Wake, NREM, REM, or Unscored to selected epochs.<br>"
                      f"<b>{_mod}+Z / {_mod}+Y</b> — undo / redo."),
@@ -1850,8 +1930,17 @@ class Scope:
                      "<b>Space</b> — play / pause<br>"
                      "<b>[ / ]</b> or <b>PageUp / PageDown</b> — page back / forward<br>"
                      "<b>← / →</b> — fine scroll (10 % of window)<br>"
-                     "<b>Mouse wheel</b> — scroll signals left / right"),
-                    ("8  Save results",
+                     "<b>Mouse wheel</b> — scroll left / right"),
+                    ("8  Centre &amp; scale signals",
+                     "<b>C</b> or <b>⊕</b> (transport bar) — centre all visible signals on their "
+                     "current-window mean; useful when DC offset or drift pushes a trace out of view.<br>"
+                     "<b>⊕</b> in a channel header — centre that channel only.<br>"
+                     "<b>Optimize Scale</b> — reset amplitude scale and offset for that channel."),
+                    ("9  Resize panels",
+                     "Drag the splitter handle between the <b>left channel panel</b> and the canvas, "
+                     "or between the canvas and the <b>right sidebar</b>, to resize freely.<br>"
+                     "<b>☰</b> — collapse / restore the sidebar (last width is remembered)."),
+                    ("10  Save results",
                      "<b>Save Session (JSON)</b> to resume later, <b>Export Hypnogram CSV</b>, "
                      "or <b>Save HDF5</b> for downstream analysis."),
                 ]
@@ -2024,6 +2113,10 @@ class Scope:
                     self_w._scrollbar.setValue(int(new_t0 * _SCROLLBAR_RES))
                     return
 
+                # Centre all signals on visible mean
+                if key == Qt.Key.Key_C and not (mods & Ctrl):
+                    self_w._centre_all_signals(); return
+
                 # Sleep stage assignment (W / N / R / U)
                 if self_w._session is not None:
                     _state_keys = {
@@ -2099,6 +2192,7 @@ class Scope:
         dpi: int = 100,
         session: "ScoringSession | None" = None,
         show_hypnogram: bool = True,
+        theme: "str | Theme" = "dark",
     ) -> Path:
         """Render a scrolling MP4 video of the specified signals.
 
@@ -2132,9 +2226,22 @@ class Scope:
             If ``True`` (default) and *session* is supplied, append a hypnogram
             strip at the bottom of the video.  Ignored when *session* is
             ``None``.
+        theme:
+            Color theme for the video.  Pass ``"dark"`` (default) or
+            ``"light"``, or a :class:`Theme` instance for full control.
         """
         if self.recording is None:
             raise ValueError("No recording loaded.")
+
+        if isinstance(theme, str):
+            if theme == "light":
+                _theme = LIGHT_THEME
+            elif theme == "dark":
+                _theme = DARK_THEME
+            else:
+                raise ValueError(f"Unknown theme {theme!r}. Use 'dark', 'light', or a Theme instance.")
+        else:
+            _theme = theme
 
         if output_path is None:
             output_path = Path("output") / f"{self.recording.animal_id}_scope.mp4"
@@ -2154,7 +2261,7 @@ class Scope:
         from matplotlib.animation import FFMpegWriter
         from sleep_tools.scoring.state import STATE_COLORS
 
-        sig_data = self._prepare_with(self.recording, self.analyzer, list(signals))
+        sig_data = self._prepare_with(self.recording, self.analyzer, list(signals), theme=_theme)
         n = len(sig_data)
         if n == 0:
             raise ValueError("No valid signals found.")
@@ -2178,9 +2285,11 @@ class Scope:
             axes = [raw_axes] if n == 1 else list(raw_axes)
             hyp_ax = None
 
+        fig.patch.set_facecolor(_theme.bg)
+
         lines = []
         for ax, sig in zip(axes, sig_data):
-            _apply_ax_style(ax, sig, DARK_THEME)
+            _apply_ax_style(ax, sig, _theme)
             (line,) = ax.plot([], [], lw=0.7, color=sig.color)
             lines.append(line)
             if y_lims and sig.name in y_lims:
@@ -2190,7 +2299,7 @@ class Scope:
 
         # ── Hypnogram strip (static pcolormesh, scrolls with signal window) ──
         if draw_hyp:
-            th = DARK_THEME
+            th = _theme
             n_epochs = len(session.labels)  # type: ignore[union-attr]
             L = session.epoch_len            # type: ignore[union-attr]
             total_dur = self.recording.duration
@@ -2275,18 +2384,19 @@ class Scope:
         self,
         recording: SleepRecording,
         analyzer: SleepAnalyzer | None,
-        names: list[str]
+        names: list[str],
+        theme: Theme = DARK_THEME,
     ) -> list[_SignalData]:
         """Build _SignalData objects using a specific recording/analyzer."""
         raw_arr, raw_times = recording.raw.get_data(return_times=True)
         ch_names = recording.raw.ch_names
-        
+
         derived: dict | None = None
         if analyzer is not None and any(n in _DERIVED_KEYS for n in names):
             derived = analyzer.compute_all_features(overlap=0.9)
-            
+
         result: list[_SignalData] = []
-        theme_colors = DARK_THEME.signals
+        theme_colors = theme.signals
 
         for i, name in enumerate(names):
             color_idx = i % len(theme_colors)

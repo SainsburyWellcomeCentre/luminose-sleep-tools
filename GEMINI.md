@@ -86,10 +86,16 @@ The `Scope` viewer supports a streamlined workflow for sleep staging:
 | **N** | Assign **NREM** to selected epoch(s) |
 | **R** | Assign **REM** to selected epoch(s) |
 | **U** | Assign **Unscored** to selected epoch(s) |
+| **C** | Centre all visible signals on their visible-window mean |
 | **Ctrl + Z** | Undo last label change |
 | **Ctrl + Y** | Redo last undone change |
 | **Space** | Play / Pause playback |
-| **< / >** | Previous / Next page |
+| **← / →** | Fine scroll (10 % of visible window) |
+| **[ / ]** or **PageUp / PageDown** | Previous / Next page |
+
+### Panel Controls
+- **Centre signals** — `⊕` in the transport bar (or `C`) centres all channels on their current-window mean. The `⊕` icon in each channel's header row centres that channel individually. **Optimize Scale** resets both scale and offset for that channel.
+- **Resizable panels** — Drag the splitter handles between the left channel-control panel, the centre canvas, and the right sidebar. The **☰** sidebar toggle collapses/restores the sidebar remembering its last width.
 
 ---
 
