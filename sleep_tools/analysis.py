@@ -123,9 +123,14 @@ class SleepAnalyzer:
     # EEG / EMG filtering
     # ------------------------------------------------------------------ #
 
+    def _resolve_eeg_channels(self) -> list[str]:
+        """Return available EEG channel names (EEG1, EEG2) from the recording."""
+        available = self.recording.raw.ch_names
+        return [ch for ch in ("EEG1", "EEG2") if ch in available]
+
     def filter_eeg(
         self,
-        channel: str = "EEG1",
+        channel: str | None = None,
         hp_cutoff: float = 0.5,
     ) -> np.ndarray:
         """High-pass EEG by subtracting a low-pass DC/drift estimate.
@@ -134,10 +139,19 @@ class SleepAnalyzer:
         1. IIR 2nd-order Butterworth low-pass at *hp_cutoff* Hz → drift.
         2. Return ``original − drift``.
 
+        When *channel* is ``None`` (the default), the channel is resolved
+        automatically:
+
+        - Both EEG1 and EEG2 present → average the two signals before filtering.
+        - Only one present → use that channel.
+        - Neither present → print a message and block until Enter is pressed,
+          then raise ``RuntimeError``.
+
         Parameters
         ----------
         channel:
-            Channel name (e.g. ``"EEG1"``).
+            Explicit channel name (e.g. ``"EEG1"``), or ``None`` for
+            automatic resolution.
         hp_cutoff:
             Low-pass cutoff for the drift estimate (= effective high-pass
             corner), in Hz.
@@ -147,7 +161,25 @@ class SleepAnalyzer:
         np.ndarray
             Filtered signal, shape ``(n_samples,)``.
         """
-        data = self._get_channel_data(channel)
+        if channel is not None:
+            data = self._get_channel_data(channel)
+        else:
+            eeg_channels = self._resolve_eeg_channels()
+            if len(eeg_channels) == 0:
+                print(
+                    "No EEG channels (EEG1 or EEG2) found in the recording. "
+                    "Please check your data, then press Enter to continue..."
+                )
+                input()
+                raise RuntimeError("No EEG channels available for analysis.")
+            elif len(eeg_channels) == 1:
+                print(f"Only {eeg_channels[0]} found; using it for EEG analysis.")
+                data = self._get_channel_data(eeg_channels[0])
+            else:
+                data = (
+                    self._get_channel_data("EEG1") + self._get_channel_data("EEG2")
+                ) / 2.0
+
         fs = self.recording.sfreq
         sos = signal.butter(2, hp_cutoff, btype="low", fs=fs, output="sos")
         drift = signal.sosfiltfilt(sos, data)
@@ -332,7 +364,7 @@ class SleepAnalyzer:
 
     def compute_all_features(
         self,
-        eeg_channel: str = "EEG1",
+        eeg_channel: str | None = None,
         emg_channel: str = "EMG",
         hp_cutoff: float = 0.5,
         bp_low: float = 5.0,
@@ -347,6 +379,14 @@ class SleepAnalyzer:
         The result is cached; a second call with the same instance returns
         the cached dict immediately, unless *overlap* or *epoch_window*
         differs from the cached ones.
+
+        Parameters
+        ----------
+        eeg_channel:
+            Explicit EEG channel name, or ``None`` (default) to auto-resolve:
+            average EEG1+EEG2 when both present, use whichever is present
+            when only one exists, or raise ``RuntimeError`` (after prompting)
+            if neither is found.
 
         Returns
         -------
