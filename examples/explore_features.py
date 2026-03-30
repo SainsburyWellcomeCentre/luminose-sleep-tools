@@ -18,10 +18,11 @@ rec = SleepRecording.from_edf(EDF, verbose=False)
 print(rec)
 print()
 
-ana = SleepAnalyzer(rec, epoch_len=5.0)
+# eeg_channel: None (default) = average EEG1+EEG2, or "EEG1" / "EEG2" for one channel.
+ana = SleepAnalyzer(rec, epoch_len=5.0, eeg_channel="EEG1")
 
 print("Computing features (this takes ~10–20 s for a 3-hour recording) …")
-feats = ana.compute_all_features(eeg_channel="EEG1", emg_channel="EMG")
+feats = ana.compute_all_features(emg_channel="EMG")
 print()
 
 for key, val in feats.items():
