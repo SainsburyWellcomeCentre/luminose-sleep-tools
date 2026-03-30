@@ -22,7 +22,15 @@ Follows Julia's Spike2 sleep-scoring protocol, reimplemented in open-source Pyth
 
 ```bash
 mamba activate sleep-tools      # or conda activate sleep-tools
-pip install -e .
+pip install -e ".[gui]"         # includes PySide6 for the oscilloscope GUI
+```
+
+> **Note:** `pip install -e .` (without `[gui]`) installs the core package only — signal processing, HDF5 export, and analysis work, but the oscilloscope viewer (`Scope.show`, `sleep-scope` CLI) requires PySide6 and will fail to import without it. Use `.[gui]` for the full experience.
+
+For video export, also install `ffmpeg`:
+
+```bash
+conda install -c conda-forge ffmpeg
 ```
 
 ## Running the Viewer
@@ -314,6 +322,7 @@ sleep_tools/
 
 ## Requirements
 
-- Python ≥ 3.10
-- mne ≥ 1.5, numpy, scipy, pandas, matplotlib, h5py ≥ 3.8
-- PySide6 (Stage 2 GUI, optional)
+- Python ≥ 3.11
+- `mne ≥ 1.5`, `numpy`, `scipy`, `pandas`, `matplotlib`, `h5py ≥ 3.8` — installed by `pip install -e .`
+- `PySide6 ≥ 6.10` — GUI/oscilloscope; installed by `pip install -e ".[gui]"`
+- `ffmpeg` system binary — video export only; install via `conda install -c conda-forge ffmpeg`
