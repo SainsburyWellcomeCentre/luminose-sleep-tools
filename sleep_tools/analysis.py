@@ -110,14 +110,27 @@ class SleepAnalyzer:
     epoch_len:
         Default epoch length in seconds used by band-power and spectrogram
         computations when no explicit ``window`` is supplied.
+    eeg_channel:
+        Which EEG channel to use for feature computation.  One of
+        ``"EEG1"``, ``"EEG2"``, or ``None`` (default).  When ``None``
+        the channel is resolved automatically: if both EEG1 and EEG2 are
+        present their signals are averaged before filtering; if only one
+        is present it is used directly.
     """
 
-    def __init__(self, recording: SleepRecording, epoch_len: float = 5.0) -> None:
+    def __init__(
+        self,
+        recording: SleepRecording,
+        epoch_len: float = 5.0,
+        eeg_channel: str | None = None,
+    ) -> None:
         self.recording = recording
         self.epoch_len = epoch_len
+        self.eeg_channel = eeg_channel  # None = auto-average EEG1+EEG2
         self._features: dict | None = None
         self._overlap_cached: float | None = None
         self._window_cached: float | None = None
+        self._eeg_channel_cached: str | None = None
 
     # ------------------------------------------------------------------ #
     # EEG / EMG filtering
@@ -399,15 +412,19 @@ class SleepAnalyzer:
         if epoch_window is None:
             epoch_window = self.epoch_len
 
+        # Resolve effective EEG channel: explicit arg overrides instance default.
+        _eeg_ch = eeg_channel if eeg_channel is not None else self.eeg_channel
+
         if (self._features is not None and
             self._overlap_cached == overlap and
-            self._window_cached == epoch_window):
+            self._window_cached == epoch_window and
+            self._eeg_channel_cached == _eeg_ch):
             return self._features
 
         if bands is None:
             bands = BANDS
 
-        eeg = self.filter_eeg(eeg_channel, hp_cutoff)
+        eeg = self.filter_eeg(_eeg_ch, hp_cutoff)
         emg_filt = self.filter_emg(emg_channel, bp_low, bp_high)
         emg_envelope = self.emg_rms(emg_filt, emg_time_constant)
 
@@ -437,6 +454,7 @@ class SleepAnalyzer:
         }
         self._overlap_cached = overlap
         self._window_cached = epoch_window
+        self._eeg_channel_cached = _eeg_ch
         return self._features
 
     def invalidate_cache(self) -> None:
@@ -444,6 +462,7 @@ class SleepAnalyzer:
         self._features = None
         self._overlap_cached = None
         self._window_cached = None
+        self._eeg_channel_cached = None
 
     # ------------------------------------------------------------------ #
     # Internal helpers

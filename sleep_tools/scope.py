@@ -322,6 +322,9 @@ class Scope:
                 self_w._y_offsets: dict[str, float] = {}  # per-channel DC offset for centering
                 self_w._lockable_widgets: list = []  # disabled during playback
 
+                # ── EEG channel selection for analysis ────────────────
+                self_w._eeg_channel_sel: str | None = None  # None = average
+
                 # ── Scoring state ──────────────────────────────────────
                 self_w._session: ScoringSession | None = None
                 self_w._sel_indices: set[int] = set()   # selected epoch indices
@@ -569,6 +572,17 @@ class Scope:
                 centre_all_btn.clicked.connect(self_w._centre_all_signals)
                 tl.addWidget(centre_all_btn)
                 self_w._lockable_widgets.append(centre_all_btn)
+
+                # EEG channel selector button
+                self_w._eeg_btn = QToolButton()
+                self_w._eeg_btn.setFixedSize(52, 32)
+                self_w._eeg_btn.setToolTip(
+                    "EEG channel for band-power and classification\n"
+                    "Re-run 'Analyze Signals' after changing"
+                )
+                self_w._eeg_btn.clicked.connect(self_w._show_eeg_menu)
+                self_w._update_eeg_btn_text()
+                tl.addWidget(self_w._eeg_btn)
 
                 # Theme Toggle
                 self_w._theme_btn = QToolButton()
@@ -1356,9 +1370,48 @@ class Scope:
                     p = self_w._folder_path / item.text()
                     self_w._load(p)
 
+            def _update_eeg_btn_text(self_w):
+                """Update the transport-bar EEG button label to reflect current selection."""
+                labels = {None: "∿ Avg", "EEG1": "∿ EEG1", "EEG2": "∿ EEG2"}
+                self_w._eeg_btn.setText(labels.get(self_w._eeg_channel_sel, "∿ Avg"))
+
+            def _show_eeg_menu(self_w):
+                """Open popup menu for EEG channel selection."""
+                rec = self_w._recording
+                ch_names = rec.raw.ch_names if rec else []
+                has_eeg1 = "EEG1" in ch_names
+                has_eeg2 = "EEG2" in ch_names
+
+                menu = QMenu(self_w)
+                grp = QActionGroup(menu)
+                grp.setExclusive(True)
+
+                def _make_action(label: str, value):
+                    act = QAction(label, menu)
+                    act.setCheckable(True)
+                    act.setChecked(self_w._eeg_channel_sel == value)
+                    act.setData(value)
+                    grp.addAction(act)
+                    menu.addAction(act)
+                    return act
+
+                avg_act = _make_action("∿  Average (EEG1+EEG2)", None)
+                avg_act.setEnabled(has_eeg1 and has_eeg2)
+                _make_action("∿  EEG1 only", "EEG1").setEnabled(has_eeg1)
+                _make_action("∿  EEG2 only", "EEG2").setEnabled(has_eeg2)
+
+                chosen = menu.exec(self_w._eeg_btn.mapToGlobal(
+                    self_w._eeg_btn.rect().bottomLeft()
+                ))
+                if chosen is not None:
+                    self_w._eeg_channel_sel = chosen.data()
+                    self_w._update_eeg_btn_text()
+
             def _on_analyze(self_w):
                 if self_w._recording:
-                    self_w._analyzer = SleepAnalyzer(self_w._recording)
+                    self_w._analyzer = SleepAnalyzer(
+                        self_w._recording, eeg_channel=self_w._eeg_channel_sel
+                    )
                     self_w._init_data(self_w._recording, self_w._analyzer, self_w._requested_signals)
                     self_w._populate_sidebar()
                     self_w._rebuild_figure()
@@ -1918,9 +1971,13 @@ class Scope:
                     ("1  Load a recording",
                      f"<b>{_mod}+E</b> — open file  |  <b>{_mod}+O</b> — open folder<br>"
                      "Or use <b>Open File…</b> / <b>Open Folder…</b> in the RECORDING sidebar panel."),
-                    ("2  Analyze signals",
-                     "Click <b>Analyze Signals</b> to compute EEG power bands, EMG RMS, and the T:D ratio. "
-                     "Required before classification."),
+                    ("2  Choose EEG channel &amp; analyze",
+                     "<b>∿</b> button (transport bar, right of ⊕) — select which EEG signal drives "
+                     "band-power computation and classification:<br>"
+                     "• <b>∿ Avg</b> — average of EEG1 and EEG2 (default)<br>"
+                     "• <b>∿ EEG1</b> / <b>∿ EEG2</b> — use one channel only<br>"
+                     "Then click <b>Analyze Signals</b> in the RECORDING panel to compute EEG power bands, "
+                     "EMG RMS, and the T:D ratio. Re-run Analyze after changing the channel."),
                     ("3  Set thresholds &amp; classify",
                      "Adjust Wake / NREM / REM thresholds in the <b>CLASSIFICATION</b> panel, then click "
                      "<b>Run Classification</b>. Dotted reference lines appear on the δ-power, EMG RMS, "

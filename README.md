@@ -88,7 +88,8 @@ See **[how_to_score.md](how_to_score.md)** for a complete guide covering signal 
 from sleep_tools import SleepRecording, SleepAnalyzer, Scope, ScoringSession
 
 rec = SleepRecording.from_edf("path/to/recording_export.edf")
-ana = SleepAnalyzer(rec, epoch_len=5.0)
+# eeg_channel=None (default) averages EEG1+EEG2; pass "EEG1" or "EEG2" to use one channel
+ana = SleepAnalyzer(rec, epoch_len=5.0, eeg_channel=None)
 features = ana.compute_all_features()
 
 # Auto-score with default thresholds
@@ -146,6 +147,7 @@ The window features:
 - **Y-Axis Labels** — Shows current unit (e.g. `µV`, `µV²/Hz`); updates automatically.
 - **Theme** — `☯` button toggles dark / light. Spinbox and combobox arrows adapt to the theme (white on dark, black on light).
 - **? Help** — Leftmost transport button; step-by-step scoring guide with platform-aware shortcuts (Cmd on macOS).
+- **EEG Channel** — `∿` button in the transport bar (right of `⊕`) opens a popup menu to select which EEG signal drives band-power and classification: **Average (EEG1+EEG2)** (default), **EEG1 only**, or **EEG2 only**. Button label updates live. Click **Analyze Signals** after changing to recompute features.
 
 ## Video Export
 

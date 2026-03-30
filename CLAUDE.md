@@ -97,6 +97,7 @@ Opens a PySide6 Qt window.  Backend must be `QtAgg` (set at module level in `sco
 - **Resizable panels**: all three panels (left channel controls, centre canvas, right sidebar) are separated by draggable `QSplitter` handles; drag to resize; sidebar toggle (☰) collapses/restores with saved width
 - **Draggable threshold lines**: after Run Classification, dotted reference lines on δ-power, EMG RMS, and T:D ratio can be dragged vertically; spinboxes update live and vice-versa
 - **? help button**: leftmost transport button; shows step-by-step scoring instructions (keyboard shortcuts are platform-aware: Cmd on macOS, Ctrl elsewhere)
+- **EEG channel selector**: `∿` button in the transport bar (right of `⊕`); opens a popup menu with **Average (EEG1+EEG2)** (default), **EEG1 only**, **EEG2 only**; button label updates to show current selection (e.g. `∿ EEG1`); click **Analyze Signals** after changing to recompute features with the chosen channel; unavailable options are greyed out when a channel is missing
 
 ### `make_video(output_path=None, *, signals, t_start, t_end, x_window, y_lims, fps, speed, figsize, dpi, session=None, session_h5=None, show_hypnogram=True)`
 Renders a scrolling MP4 video using `matplotlib.animation.FFMpegWriter`.
@@ -142,7 +143,7 @@ Overlays are redrawn on every scroll/play tick and removed cleanly on each redra
 
 **Stage 2 complete** — `scoring/state.py` (`ScoringSession`, `AutoScoreThresholds`, `STATE_COLORS`), auto-scoring (Wake→NREM→REM thresholds), hypnogram strip in Scope, keyboard hotkeys (W/N/R/U, Ctrl/Cmd+Z/Y, Space, `[`/`]`, arrows, Ctrl/Cmd+O/E), CLASSIFICATION + LABELING sidebar panels, draggable threshold lines, `?` help dialog, save JSON / export CSV / save HDF5, reload scored session from JSON or HDF5 (`ScoringSession.from_h5`).
 
-**Stage 3 in progress** — TTL event parsing (`recording.ttl_events()`), HDF5 export of TTL times, TTL overlay panel in Scope (strips, rising/falling edge markers).
+**Stage 3 in progress** — TTL event parsing (`recording.ttl_events()`), HDF5 export of TTL times, TTL overlay panel in Scope (strips, rising/falling edge markers), EEG channel selector (Average / EEG1 / EEG2) in Scope RECORDING panel.
 
 See `agent.md` → Stage Breakdown for what is complete and what is next.
 

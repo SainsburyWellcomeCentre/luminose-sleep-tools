@@ -136,14 +136,15 @@ HDF5 layout:
 Key design: all 7 feature datasets are **always present** even when `analyzer=None`, so downstream code can rely on a fixed schema. Missing features → NaN arrays, not absent keys. All datasets and groups carry self-describing attrs so the file is readable without the package.
 
 #### `SleepAnalyzer` (analysis.py)
-- `__init__(recording: SleepRecording, epoch_len=5.0)`
-- `filter_eeg(channel='EEG1', hp_cutoff=0.5)` → filtered signal array
+- `__init__(recording: SleepRecording, epoch_len=5.0, eeg_channel: str | None = None)`
+  - `eeg_channel`: `"EEG1"`, `"EEG2"`, or `None` (default → auto-average both channels when both present)
+- `filter_eeg(channel=None, hp_cutoff=0.5)` → filtered signal array; when `channel=None` uses instance `eeg_channel`
 - `filter_emg(channel='EMG', bp_low=5, bp_high=45)` → filtered EMG array
 - `emg_rms(signal, time_constant=5.0)` → RMS envelope
 - `band_power(signal, fs, band, window=5.0, overlap=0.5)` → time-series of band power
 - `td_ratio(delta_power, theta_power)` → element-wise ratio
 - `spectrogram(signal, fs, freq_max=50, window=5.0, overlap=0.5)` → (times, freqs, Sxx)
-- `compute_all_features()` → dict of all band powers, EMG RMS, T:D ratio (cached)
+- `compute_all_features(eeg_channel=None)` → dict of all band powers, EMG RMS, T:D ratio (cached per channel+window+overlap)
 
 #### `Scope` (scope.py)
 - `__init__(recording: SleepRecording | None = None, analyzer: SleepAnalyzer | None = None)`
@@ -318,7 +319,7 @@ Acceptance: given a TSV file, correctly extract all Rise/Fall times; alignment s
 
 ## Open Questions / Design Decisions
 
-1. **Single vs. dual EEG channel**: scoring protocol picks the "best" EEG channel or an average of the two — GUI should allow toggling which channel drives feature computation
+1. **Single vs. dual EEG channel**: ✅ Resolved — `SleepAnalyzer(eeg_channel=None/"EEG1"/"EEG2")`; GUI dropdown in the RECORDING panel selects channel before "Analyze Signals"; default is average of both.
 2. **Epoch alignment**: epochs aligned to session start barcodes from bpod, followed by the first TTL event.
 3. **REM→NREM policy**: configurable (some labs allow REM→NREM directly, others do not) - TODO: find proof
 4. **Auto-score conflict resolution**: when EMG and delta thresholds give contradictory results, flag as "Ambiguous"
