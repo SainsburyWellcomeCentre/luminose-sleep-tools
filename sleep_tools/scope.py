@@ -332,6 +332,8 @@ class Scope:
                 self_w._hypno_ax = None
                 # Spinbox refs so _on_run_classification can read them
                 self_w._thr_spins: dict = {}
+                # Epoch length spinbox ref (populated in _populate_sidebar)
+                self_w._epoch_len_spin = None
                 # click event connection id (stored to avoid double-binding)
                 self_w._hypno_cid: int | None = None
                 # dirty flag: rebuild full hypnogram only when content changed
@@ -573,6 +575,20 @@ class Scope:
                 tl.addWidget(centre_all_btn)
                 self_w._lockable_widgets.append(centre_all_btn)
 
+                # Optimize All Visible Traces button
+                opt_all_btn = QToolButton()
+                opt_all_btn.setText("↕")
+                opt_all_btn.setFixedSize(32, 32)
+                opt_all_btn.setToolTip(
+                    "Optimize amplitude scale for all visible traces\n"
+                    "based on the current window"
+                )
+                opt_all_btn.clicked.connect(
+                    lambda: self_w._optimize_amplitude(local=True)
+                )
+                tl.addWidget(opt_all_btn)
+                self_w._lockable_widgets.append(opt_all_btn)
+
                 # EEG channel selector button
                 self_w._eeg_btn = QToolButton()
                 self_w._eeg_btn.setFixedSize(52, 32)
@@ -666,6 +682,34 @@ class Scope:
                     a_btn.clicked.connect(self_w._on_analyze)
                     a_btn.setStyleSheet(f"background:{t.accent}; color:{t.bg}; font-weight:bold;")
                     rl.addWidget(a_btn)
+
+                    # ── Epoch length field ─────────────────────────────
+                    epoch_row = QHBoxLayout()
+                    epoch_row.setSpacing(4)
+                    epoch_lbl = QLabel("Epoch length:")
+                    epoch_lbl.setStyleSheet(f"color:{t.muted}; font-size:10px;")
+                    epoch_row.addWidget(epoch_lbl)
+                    self_w._epoch_len_spin = QDoubleSpinBox()
+                    self_w._epoch_len_spin.setRange(0.5, 60.0)
+                    self_w._epoch_len_spin.setDecimals(1)
+                    self_w._epoch_len_spin.setSingleStep(0.5)
+                    self_w._epoch_len_spin.setValue(
+                        self_w._analyzer.epoch_len if self_w._analyzer else 5.0
+                    )
+                    self_w._epoch_len_spin.setFixedWidth(64)
+                    self_w._epoch_len_spin.setButtonSymbols(
+                        QAbstractSpinBox.ButtonSymbols.PlusMinus
+                    )
+                    self_w._epoch_len_spin.setToolTip(
+                        "Duration of each scoring epoch in seconds (default 5.0 s);\n"
+                        "applied when Analyze Signals is clicked"
+                    )
+                    epoch_row.addWidget(self_w._epoch_len_spin)
+                    epoch_unit = QLabel("s")
+                    epoch_unit.setStyleSheet(f"color:{t.muted}; font-size:9px;")
+                    epoch_row.addWidget(epoch_unit)
+                    epoch_row.addStretch()
+                    rl.addLayout(epoch_row)
                 l.addWidget(rec_box)
 
                 # ── TTL EVENTS panel (only when triggers are present) ───
@@ -754,6 +798,14 @@ class Scope:
                         thr_grid.addWidget(spin,     row, 1)
                         thr_grid.addWidget(unit_lbl, row, 2)
                     cls_l.addLayout(thr_grid)
+
+                    # ── Reset Defaults button ──────────────────────────
+                    reset_btn = QPushButton("Reset Defaults")
+                    reset_btn.setToolTip(
+                        "Restore all thresholds and epoch length to factory defaults"
+                    )
+                    reset_btn.clicked.connect(self_w._on_reset_thr_defaults)
+                    cls_l.addWidget(reset_btn)
 
                     if not self_w._analyzer:
                         note = QLabel("Run 'Analyze Signals' first")
@@ -1409,8 +1461,15 @@ class Scope:
 
             def _on_analyze(self_w):
                 if self_w._recording:
+                    epoch_len = (
+                        self_w._epoch_len_spin.value()
+                        if self_w._epoch_len_spin is not None
+                        else 5.0
+                    )
                     self_w._analyzer = SleepAnalyzer(
-                        self_w._recording, eeg_channel=self_w._eeg_channel_sel
+                        self_w._recording,
+                        eeg_channel=self_w._eeg_channel_sel,
+                        epoch_len=epoch_len,
                     )
                     self_w._init_data(self_w._recording, self_w._analyzer, self_w._requested_signals)
                     self_w._populate_sidebar()
@@ -1567,6 +1626,10 @@ class Scope:
                 if not self_w._recording or not self_w._analyzer:
                     return
 
+                # Apply epoch length from spinbox before computing features
+                if self_w._epoch_len_spin is not None:
+                    self_w._analyzer.epoch_len = self_w._epoch_len_spin.value()
+
                 features = self_w._analyzer.compute_all_features()
 
                 thr = AutoScoreThresholds(
@@ -1591,6 +1654,22 @@ class Scope:
                 self_w._thr_lines_active = True
                 self_w._rebuild_figure()
                 self_w._populate_sidebar()
+
+            def _on_reset_thr_defaults(self_w) -> None:
+                """Restore all threshold spinboxes and epoch length to factory defaults."""
+                defaults = AutoScoreThresholds()
+                for key, val in [
+                    ("delta_wake", defaults.delta_wake),
+                    ("delta_nrem", defaults.delta_nrem),
+                    ("emg_wake",   defaults.emg_wake),
+                    ("emg_nrem",   defaults.emg_nrem),
+                    ("emg_rem",    defaults.emg_rem),
+                    ("td_rem",     defaults.td_rem),
+                ]:
+                    if key in self_w._thr_spins:
+                        self_w._thr_spins[key].setValue(val)
+                if self_w._epoch_len_spin is not None:
+                    self_w._epoch_len_spin.setValue(5.0)
 
             def _on_assign_state(self_w, state: str) -> None:
                 """Assign *state* to the currently selected epoch(s)."""
@@ -1976,12 +2055,14 @@ class Scope:
                      "band-power computation and classification:<br>"
                      "• <b>∿ Avg</b> — average of EEG1 and EEG2 (default)<br>"
                      "• <b>∿ EEG1</b> / <b>∿ EEG2</b> — use one channel only<br>"
-                     "Then click <b>Analyze Signals</b> in the RECORDING panel to compute EEG power bands, "
-                     "EMG RMS, and the T:D ratio. Re-run Analyze after changing the channel."),
+                     "Set <b>Epoch length</b> (below the button, default 5.0 s) then click "
+                     "<b>Analyze Signals</b> in the RECORDING panel to compute EEG power bands, "
+                     "EMG RMS, and the T:D ratio. Re-run Analyze after changing the channel or epoch length."),
                     ("3  Set thresholds &amp; classify",
-                     "Adjust Wake / NREM / REM thresholds in the <b>CLASSIFICATION</b> panel, then click "
-                     "<b>Run Classification</b>. Dotted reference lines appear on the δ-power, EMG RMS, "
-                     "and T:D ratio traces."),
+                     "Adjust Wake / NREM / REM thresholds in the <b>CLASSIFICATION</b> panel.<br>"
+                     "• <b>Reset Defaults</b> — restores all thresholds and epoch length to factory values.<br>"
+                     "Click <b>Run Classification</b> to run auto-scoring. "
+                     "Dotted reference lines appear on the δ-power, EMG RMS, and T:D ratio traces."),
                     ("4  Adjust thresholds interactively",
                      "Drag any dotted reference line up or down — the spinbox updates live. "
                      "Or edit the spinbox directly and the line moves."),
@@ -2001,7 +2082,9 @@ class Scope:
                      "<b>C</b> or <b>⊕</b> (transport bar) — centre all visible signals on their "
                      "current-window mean; useful when DC offset or drift pushes a trace out of view.<br>"
                      "<b>⊕</b> in a channel header — centre that channel only.<br>"
-                     "<b>Optimize Scale</b> — reset amplitude scale and offset for that channel."),
+                     "<b>↕</b> (transport bar, right of ⊕) — optimize amplitude scale for <i>all</i> "
+                     "visible traces based on the current window.<br>"
+                     "<b>Optimize Scale</b> — reset amplitude scale and offset for that channel only."),
                     ("9  Resize panels",
                      "Drag the splitter handle between the <b>left channel panel</b> and the canvas, "
                      "or between the canvas and the <b>right sidebar</b>, to resize freely.<br>"

@@ -271,7 +271,7 @@ Tasks:
 4. Hypnogram strip in Scope figure (pcolormesh, color-coded W/N/R/U) ✅
 5. Click to select epoch, Shift+click to extend selection range ✅
 6. W/N/R/U keyboard hotkeys for state assignment; Ctrl/Cmd+Z/Y for undo/redo ✅
-7. CLASSIFICATION sidebar panel: 6 threshold spinboxes + Run Classification button ✅
+7. CLASSIFICATION sidebar panel: 6 threshold spinboxes + **epoch length field** + **Reset Defaults** + Run Classification button ✅
 8. LABELING sidebar panel: state counts, manual W/N/R/U buttons, undo/redo, save/export ✅
 9. Save session JSON, export hypnogram CSV, save HDF5 (with thresholds in /epochs/thresholds) ✅
 10. Load session from JSON (`ScoringSession.load`) ✅
@@ -283,6 +283,9 @@ Tasks:
 15. Fusion Qt style set at app init: ensures spinbox/combobox arrows use palette colors (white in dark theme, black in light theme) ✅
 16. **Centre signals**: `⊕` transport button + `C` key centres all visible channels on their visible-window mean (stored as per-channel y-offset in `_y_offsets`); per-channel `⊕` icon in channel header row centres that channel only; **Optimize Scale** resets offset to 0 ✅
 17. **Resizable panels via QSplitter**: left channel panel, centre canvas, and right sidebar are separated by draggable `QSplitter` handles (`_inner_splitter`, `_outer_splitter`); `time_row` uses a `_time_spacer` widget whose width tracks the inner splitter so the x-axis label stays canvas-centred; `_toggle_sidebar` uses `setSizes` to save/restore sidebar width ✅
+18. **↕ Optimize All**: transport bar button (right of `⊕`); calls `_optimize_amplitude(local=True)` to auto-scale all visible traces to the current window in one click ✅
+19. **Epoch length field** (`_epoch_len_spin`): `QDoubleSpinBox` in CLASSIFICATION panel, range 0.5–60.0 s, default 5.0 s; applied to `analyzer.epoch_len` before `compute_all_features()` on Run Classification ✅
+20. **Reset Defaults** button: in CLASSIFICATION panel; calls `_on_reset_thr_defaults()` to restore all 6 threshold spinboxes and epoch length to `AutoScoreThresholds()` factory values ✅
 
 Key classes:
 - `ScoringSession(recording, epoch_len=5.0)` — exported from `sleep_tools`

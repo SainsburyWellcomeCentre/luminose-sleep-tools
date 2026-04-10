@@ -317,8 +317,10 @@ In the Scope window:
 2. **CLASSIFICATION panel** — review the six threshold spinboxes. Adjust if needed:
    - Increase `delta_nrem` if too many noisy Wake epochs are being called NREM.
    - Increase `td_rem` if Wake epochs with moderate theta are being called REM.
-3. **Run Classification** — click to auto-score all epochs. The hypnogram strip at the top of the figure updates immediately.
-4. Inspect the result: look for obvious errors (e.g., isolated NREM epochs surrounded by Wake, REM epochs at the start of the recording before any NREM).
+3. **Epoch length** — set the scoring window (seconds) in the `Epoch length` field (default 5.0 s). This is applied to the analyzer before features are computed.
+4. **Reset Defaults** — click to restore all six thresholds and the epoch length to factory values (`AutoScoreThresholds()`).
+5. **Run Classification** — click to auto-score all epochs. The hypnogram strip at the top of the figure updates immediately.
+6. Inspect the result: look for obvious errors (e.g., isolated NREM epochs surrounded by Wake, REM epochs at the start of the recording before any NREM).
 
 ### 4. Adjust thresholds and re-run
 
@@ -345,9 +347,10 @@ Scrolling workflow:
 - The **window width** spinbox sets how many seconds are visible at once (try 60–300 s for overview, 15–30 s for detailed inspection).
 - The hypnogram strip at the top always shows the full recording; the shaded region shows the current window.
 
-Centering drifted signals:
+Centering and scaling signals:
 - Press **C** (or click **⊕** in the transport bar) to centre all visible signals on their current-window mean — useful when a DC offset or drift pushes a trace out of view.
 - Click the **⊕** icon in a channel's header row to centre only that channel.
+- Click **↕** in the transport bar (right of **⊕**) to auto-scale all visible traces to fit the current window at once.
 - Click **Optimize Scale** to reset both the amplitude scale and the offset for that channel.
 
 Resizing panels:

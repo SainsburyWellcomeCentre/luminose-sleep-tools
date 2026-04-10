@@ -110,7 +110,9 @@ scope.show()
 
 The Scope window provides:
 - Hypnogram strip with colour-coded epochs (amber = Wake, blue = NREM, green = REM)
-- CLASSIFICATION panel: six threshold spinboxes + Run Classification button
+- CLASSIFICATION panel: six threshold spinboxes + **Epoch length** field + **Reset Defaults** + Run Classification button
+- **Epoch length field** — set the scoring window (seconds) before running classification; default 5.0 s
+- **Reset Defaults** — one-click restore of all thresholds and epoch length to factory values
 - **Draggable threshold lines** — dotted reference lines on δ-power, EMG RMS, and T:D axes; drag up/down to adjust thresholds live (spinboxes sync, and vice-versa)
 - LABELING panel: state counts, W/N/R/U buttons, undo/redo, save/export
 - Click or Shift+click epochs in the hypnogram to select; Cmd/Ctrl+click to toggle
@@ -143,6 +145,7 @@ The window features:
 - **Time Window** — Adjust visible width (0.1 – 3600 s) via the `⌛` menu.
 - **Per-channel controls** — Amplitude spinbox, unit selector, and Optimize Scale button for each trace. `⊕` icon in the channel header centres that trace on its visible mean; `−` hides it.
 - **Centre signals** — `⊕` button in the transport bar (or press `C`) centres all visible channels on their visible mean simultaneously. Per-channel `⊕` in the header row does the same for one channel. Clicking **Optimize Scale** resets that channel's offset back to zero baseline.
+- **↕ Optimize All** — transport bar button (right of `⊕`) auto-scales all visible traces to fit the current window simultaneously.
 - **Resizable panels** — Drag the splitter handles between the left channel panel, the centre canvas, and the right sidebar to resize them freely. The sidebar toggle (`☰`) collapses/restores the sidebar while remembering its last width.
 - **Y-Axis Labels** — Shows current unit (e.g. `µV`, `µV²/Hz`); updates automatically.
 - **Theme** — `☯` button toggles dark / light. Spinbox and combobox arrows adapt to the theme (white on dark, black on light).
