@@ -96,7 +96,7 @@ class SleepRecording:
         # Auto-discover TSV
         if tsv_path is None:
             candidate = edf_path.parent / edf_path.name.replace("_export.edf", "_annotations.tsv")
-            tsv_path = candidate if candidate.exists() else None
+            tsv_path = candidate if (candidate.suffix == ".tsv" and candidate.exists()) else None
 
         annotations: pd.DataFrame | None = None
         animal_id = ""
