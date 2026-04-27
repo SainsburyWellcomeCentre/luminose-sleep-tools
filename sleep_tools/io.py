@@ -30,6 +30,74 @@ _EPOCH_FEATURE_KEYS: tuple[str, ...] = (
 )
 
 
+def _times_match(a: np.ndarray, b: np.ndarray) -> bool:
+    """Return True when two time axes are the same within numeric tolerance."""
+    return a.shape == b.shape and np.allclose(a, b, rtol=1e-9, atol=1e-9)
+
+
+def _interp_feature_to_times(
+    source_times: np.ndarray,
+    values: np.ndarray,
+    target_times: np.ndarray,
+) -> np.ndarray:
+    """Interpolate one scalar feature vector onto a target time axis."""
+    if target_times.size == 0:
+        return np.asarray([], dtype=np.float64)
+    if values.size == 0 or source_times.size == 0:
+        return np.full(len(target_times), np.nan, dtype=np.float64)
+    if values.size != source_times.size:
+        return np.full(len(target_times), np.nan, dtype=np.float64)
+
+    values = values.astype(np.float64, copy=False)
+    source_times = source_times.astype(np.float64, copy=False)
+    finite = np.isfinite(source_times) & np.isfinite(values)
+    if finite.sum() == 0:
+        return np.full(len(target_times), np.nan, dtype=np.float64)
+    if finite.sum() == 1:
+        out = np.full(len(target_times), np.nan, dtype=np.float64)
+        out[np.argmin(np.abs(target_times - source_times[finite][0]))] = values[finite][0]
+        return out
+
+    return np.interp(
+        target_times.astype(np.float64, copy=False),
+        source_times[finite],
+        values[finite],
+        left=np.nan,
+        right=np.nan,
+    )
+
+
+def _align_features_to_epoch_times(
+    features: dict,
+    epoch_times: np.ndarray,
+) -> tuple[dict[str, np.ndarray], str]:
+    """Align analyzer feature arrays to the epoch time axis.
+
+    Returns the aligned feature arrays and a source marker suitable for HDF5
+    attrs. Missing or incompatible features are represented as NaN arrays.
+    """
+    source_times = np.asarray(features.get("times", []), dtype=np.float64)
+    epoch_times = np.asarray(epoch_times, dtype=np.float64)
+    aligned: dict[str, np.ndarray] = {}
+
+    if _times_match(source_times, epoch_times):
+        for key in _EPOCH_FEATURE_KEYS:
+            arr = np.asarray(features.get(key, np.full(len(epoch_times), np.nan)))
+            if arr.size == len(epoch_times):
+                aligned[key] = arr.astype(np.float64, copy=False)
+            else:
+                aligned[key] = np.full(len(epoch_times), np.nan)
+        return aligned, "native_epoch"
+
+    for key in _EPOCH_FEATURE_KEYS:
+        arr = np.asarray(features.get(key, []), dtype=np.float64)
+        if arr.size == len(epoch_times) and arr.size != source_times.size:
+            aligned[key] = arr.astype(np.float64, copy=False)
+        else:
+            aligned[key] = _interp_feature_to_times(source_times, arr, epoch_times)
+    return aligned, "interpolated_from_analysis"
+
+
 # Map raw EDF channel names → canonical short names used throughout the package.
 # Users can override by passing channel_rename to from_edf().
 _DEFAULT_CHANNEL_RENAME: dict[str, str] = {
@@ -442,14 +510,24 @@ def save_to_h5(
 
     # ── Epoch times & features ────────────────────────────────────────────
     feat_arrays: dict[str, np.ndarray]
+    analysis_feat_arrays: dict[str, np.ndarray] | None = None
+    analysis_times: np.ndarray | None = None
+    feature_source = "not_computed"
+    feature_config: dict | None = None
     if analyzer is not None:
         feat = analyzer.compute_all_features()
-        times: np.ndarray = feat["times"]
+        times: np.ndarray = np.asarray(feat["times"], dtype=np.float64)
         used_epoch_len = analyzer.epoch_len
-        feat_arrays = {
-            key: feat.get(key, np.full(len(times), np.nan))
+        analysis_times = times.copy()
+        analysis_feat_arrays = {
+            key: np.asarray(feat.get(key, np.full(len(times), np.nan)), dtype=np.float64)
             for key in _EPOCH_FEATURE_KEYS
         }
+        feat_arrays = dict(analysis_feat_arrays)
+        feature_source = "native_analysis_timebase"
+        raw_feature_config = feat.get("feature_config")
+        if isinstance(raw_feature_config, dict):
+            feature_config = raw_feature_config
     else:
         used_epoch_len = epoch_len
         # Non-overlapping epoch centres: 0.5·L, 1.5·L, 2.5·L, …
@@ -460,8 +538,9 @@ def save_to_h5(
     if session is not None:
         used_epoch_len = session.epoch_len
         times = session.times
-        # Rebuild NaN feature arrays to match session epoch count if no analyzer
-        if analyzer is None:
+        if analyzer is not None:
+            feat_arrays, feature_source = _align_features_to_epoch_times(feat, times)
+        else:
             feat_arrays = {key: np.full(len(times), np.nan) for key in _EPOCH_FEATURE_KEYS}
 
     n_epochs = len(times)
@@ -495,6 +574,22 @@ def save_to_h5(
     except importlib.metadata.PackageNotFoundError:
         _pkg_version = "unknown"
 
+    band_definitions = (
+        feature_config.get("bands")
+        if feature_config is not None and isinstance(feature_config.get("bands"), dict)
+        else {k: list(v) for k, v in BANDS.items()}
+    )
+    analysis_profile = (
+        feature_config.get("profile")
+        if feature_config is not None
+        else getattr(analyzer, "profile", "none") if analyzer is not None else "none"
+    )
+    eeg_channel = (
+        feature_config.get("eeg_channel")
+        if feature_config is not None
+        else getattr(analyzer, "eeg_channel", None) if analyzer is not None else "none"
+    )
+
     with h5py.File(path, "w") as f:
         # Root-level metadata
         f.attrs["animal_id"] = recording.animal_id
@@ -508,10 +603,14 @@ def save_to_h5(
         f.attrs["epoch_len"] = used_epoch_len
         f.attrs["n_epochs"] = n_epochs
         f.attrs["features_computed"] = analyzer is not None
+        f.attrs["analysis_profile"] = analysis_profile
+        f.attrs["eeg_channel"] = "average" if eeg_channel is None else str(eeg_channel)
+        f.attrs["feature_timebase"] = "epochs"
+        f.attrs["feature_source"] = feature_source
         f.attrs["sleep_tools_version"] = _pkg_version
-        f.attrs["band_definitions"] = json.dumps(
-            {k: list(v) for k, v in BANDS.items()}
-        )
+        f.attrs["band_definitions"] = json.dumps(band_definitions)
+        if feature_config is not None:
+            f.attrs["feature_config"] = json.dumps(feature_config)
         f.attrs["saved_at"] = (
             datetime.datetime.now(datetime.timezone.utc).isoformat()
         )
@@ -556,9 +655,9 @@ def save_to_h5(
                 thr_grp.attrs[k] = float(v)
 
         feat_grp = ep_grp.create_group("features")
-        feat_grp.attrs["band_definitions"] = json.dumps(
-            {k: list(v) for k, v in BANDS.items()}
-        )
+        feat_grp.attrs["band_definitions"] = json.dumps(band_definitions)
+        feat_grp.attrs["feature_timebase"] = "epochs"
+        feat_grp.attrs["feature_source"] = feature_source
         for key in _EPOCH_FEATURE_KEYS:
             ds = feat_grp.create_dataset(
                 key,
@@ -573,6 +672,31 @@ def save_to_h5(
                 ds.attrs["frequency_range_hz"] = list(freq)
             else:
                 ds.attrs["frequency_range_hz"] = "derived"
+
+        if (
+            analyzer is not None
+            and analysis_times is not None
+            and analysis_feat_arrays is not None
+            and not _times_match(np.asarray(times, dtype=np.float64), analysis_times)
+        ):
+            analysis_grp = f.create_group("analysis")
+            analysis_grp.attrs["analysis_profile"] = analysis_profile
+            analysis_grp.attrs["eeg_channel"] = (
+                "average" if eeg_channel is None else str(eeg_channel)
+            )
+            analysis_grp.attrs["feature_timebase"] = "native_analysis"
+            analysis_grp.attrs["band_definitions"] = json.dumps(band_definitions)
+            if feature_config is not None:
+                analysis_grp.attrs["feature_config"] = json.dumps(feature_config)
+            analysis_times_ds = analysis_grp.create_dataset("times", data=analysis_times)
+            analysis_times_ds.attrs["units"] = "s"
+            analysis_times_ds.attrs["description"] = "native analyzer feature times"
+            analysis_feat_grp = analysis_grp.create_group("features")
+            for key in _EPOCH_FEATURE_KEYS:
+                analysis_feat_grp.create_dataset(
+                    key,
+                    data=analysis_feat_arrays[key].astype(np.float64),
+                )
 
         # /annotations/ — one dataset per TSV column
         if recording.annotations is not None and not recording.annotations.empty:

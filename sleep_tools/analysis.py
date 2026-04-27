@@ -1,7 +1,11 @@
 """Signal processing: EEG/EMG filtering, band power, spectrogram, T:D ratio."""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Literal
 
 import numpy as np
-from scipy import signal
+from scipy import ndimage, signal
 
 from sleep_tools.io import SleepRecording
 
@@ -14,6 +18,51 @@ BANDS: dict[str, tuple[float, float]] = {
     "beta": (13.0, 30.0),
     "gamma": (30.0, 100.0),
 }
+
+SPIKE2_BANDS: dict[str, tuple[float, float]] = {
+    **BANDS,
+    "delta": (0.0, 4.0),
+}
+
+AnalysisProfile = Literal["standard", "spike2"]
+FilterPhase = Literal["zero", "causal"]
+BandPowerMethod = Literal["stft", "spike2_smooth"]
+
+
+@dataclass(frozen=True)
+class EEGFilterConfig:
+    """EEG drift-filter settings."""
+
+    cutoff_hz: float = 0.5
+    order: int = 2
+    phase: FilterPhase = "zero"
+
+
+@dataclass(frozen=True)
+class BandPowerConfig:
+    """Band-power settings used by feature computation."""
+
+    method: BandPowerMethod = "stft"
+    output_interval: float | None = None
+    smoothing_time_constant: float = 5.0
+    window: float = 5.0
+    overlap: float = 0.5
+    fft_size: int | None = None
+    target_sfreq: float | None = None
+
+
+@dataclass(frozen=True)
+class _FeatureCacheKey:
+    profile: AnalysisProfile
+    eeg_channel: str | None
+    emg_channel: str
+    eeg_filter: EEGFilterConfig
+    bp_low: float
+    bp_high: float
+    emg_transition_width: float
+    emg_time_constant: float
+    band_power: BandPowerConfig
+    bands: tuple[tuple[str, float, float], ...]
 
 # EMG filter defaults (Hz) — kept here so FEATURE_INFO can reference them.
 _EMG_BP_LOW: float = 5.0
@@ -123,14 +172,16 @@ class SleepAnalyzer:
         recording: SleepRecording,
         epoch_len: float = 5.0,
         eeg_channel: str | None = None,
+        profile: AnalysisProfile = "standard",
     ) -> None:
+        if profile not in ("standard", "spike2"):
+            raise ValueError("profile must be 'standard' or 'spike2'.")
         self.recording = recording
-        self.epoch_len = epoch_len
+        self.epoch_len = float(epoch_len)
         self.eeg_channel = eeg_channel  # None = auto-average EEG1+EEG2
+        self.profile: AnalysisProfile = profile
         self._features: dict | None = None
-        self._overlap_cached: float | None = None
-        self._window_cached: float | None = None
-        self._eeg_channel_cached: str | None = None
+        self._feature_cache_key: _FeatureCacheKey | None = None
 
     # ------------------------------------------------------------------ #
     # EEG / EMG filtering
@@ -145,6 +196,8 @@ class SleepAnalyzer:
         self,
         channel: str | None = None,
         hp_cutoff: float = 0.5,
+        order: int = 2,
+        phase: FilterPhase | None = None,
     ) -> np.ndarray:
         """High-pass EEG by subtracting a low-pass DC/drift estimate.
 
@@ -174,9 +227,22 @@ class SleepAnalyzer:
         np.ndarray
             Filtered signal, shape ``(n_samples,)``.
         """
+        if phase is None:
+            phase = "causal" if self.profile == "spike2" else "zero"
+        if phase not in ("zero", "causal"):
+            raise ValueError("phase must be 'zero' or 'causal'.")
+
+        if channel is None and self.eeg_channel is not None:
+            channel = self.eeg_channel
+
         if channel is not None:
             data = self._get_channel_data(channel)
         else:
+            if self.profile == "spike2":
+                raise ValueError(
+                    "Spike2-compatible mode requires an explicit eeg_channel "
+                    "(for example 'EEG2'); hidden EEG averaging is disabled."
+                )
             eeg_channels = self._resolve_eeg_channels()
             if len(eeg_channels) == 0:
                 print(
@@ -194,8 +260,12 @@ class SleepAnalyzer:
                 ) / 2.0
 
         fs = self.recording.sfreq
-        sos = signal.butter(2, hp_cutoff, btype="low", fs=fs, output="sos")
-        drift = signal.sosfiltfilt(sos, data)
+        if phase == "zero":
+            sos = signal.butter(order, hp_cutoff, btype="low", fs=fs, output="sos")
+            drift = signal.sosfiltfilt(sos, data)
+        else:
+            b, a = signal.butter(order, hp_cutoff, btype="low", fs=fs)
+            drift = signal.lfilter(b, a, data)
         return data - drift
 
     def filter_emg(
@@ -256,6 +326,26 @@ class SleepAnalyzer:
         ema = signal.lfilter([alpha], [1.0, -(1.0 - alpha)], squared)
         return np.sqrt(np.maximum(ema, 0.0))
 
+    def emg_rms_spike2_like(
+        self,
+        emg_signal: np.ndarray,
+        time_constant: float = 5.0,
+    ) -> np.ndarray:
+        """Spike2 OSD4-like centred RMS envelope.
+
+        OSD4 describes the RMS time constant as ``5s (=+/-5s)``. This uses a
+        centred window with total width ``2 * time_constant`` seconds.
+        """
+        fs = self.recording.sfreq
+        window = max(1, int(round(2.0 * time_constant * fs)))
+        squared = emg_signal.astype(np.float64, copy=False) ** 2
+        mean_square = ndimage.uniform_filter1d(
+            squared,
+            size=window,
+            mode="nearest",
+        )
+        return np.sqrt(np.maximum(mean_square, 0.0))
+
     # ------------------------------------------------------------------ #
     # Frequency-domain features
     # ------------------------------------------------------------------ #
@@ -306,6 +396,78 @@ class SleepAnalyzer:
         mask = (freqs >= f_lo) & (freqs <= f_hi)
         power = np.trapezoid(Sxx[mask, :], freqs[mask], axis=0)
         return times, power
+
+    def band_power_spike2_like(
+        self,
+        eeg_signal: np.ndarray,
+        band: tuple[float, float],
+        output_interval: float = 0.1,
+        smoothing_time_constant: float = 5.0,
+        fft_size: int = 256,
+        target_sfreq: float = 512.0,
+        chunk_windows: int = 20_000,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Approximate Spike2 OSD4's smoothed ``Pw(...)`` band-power trace.
+
+        OSD4.s2s interpolates EEG to about 512 Hz, creates a virtual channel
+        using ``Pw(channel, step, low, high)`` every 0.1 s, then applies a
+        Smooth channel process. Spike2's exact ``Pw`` implementation is not
+        public, so this uses a chunked Hann-window FFT approximation and
+        zero-phase exponential smoothing. It is intentionally memory bounded:
+        full-night recordings would be too large for a dense spectrogram.
+        """
+        source_fs = self.recording.sfreq
+        x = eeg_signal.astype(np.float64, copy=False)
+        if not np.isclose(source_fs, target_sfreq):
+            n_target = int(round(len(x) * target_sfreq / source_fs))
+            x = signal.resample(x, n_target)
+            fs = float(target_sfreq)
+        else:
+            fs = float(source_fs)
+
+        hop = max(1, int(round(output_interval * fs)))
+        n = len(x)
+        if n < fft_size:
+            return np.asarray([], dtype=np.float64), np.asarray([], dtype=np.float64)
+
+        starts = np.arange(0, n - fft_size + 1, hop, dtype=np.int64)
+        times = starts.astype(np.float64) / fs
+        freqs = np.fft.rfftfreq(fft_size, d=1.0 / fs)
+        f_lo, f_hi = band
+        mask = (freqs >= f_lo) & (freqs <= f_hi)
+        if not np.any(mask):
+            return times, np.full(len(times), np.nan, dtype=np.float64)
+
+        window = signal.windows.hann(fft_size, sym=False)
+        scale = 1.0 / np.sum(window) ** 2
+        one_sided = np.ones(len(freqs), dtype=np.float64)
+        if fft_size % 2 == 0:
+            one_sided[1:-1] = 2.0
+        else:
+            one_sided[1:] = 2.0
+        power = np.empty(len(starts), dtype=np.float64)
+
+        for i0 in range(0, len(starts), chunk_windows):
+            chunk = starts[i0 : i0 + chunk_windows]
+            windows = np.empty((len(chunk), fft_size), dtype=np.float64)
+            for row, start in enumerate(chunk):
+                windows[row, :] = x[start : start + fft_size]
+            windows *= window
+            spec = np.fft.rfft(windows, axis=1)
+            ps = (np.abs(spec) ** 2) * scale
+            ps *= one_sided
+            power[i0 : i0 + len(chunk)] = ps[:, mask].sum(axis=1)
+
+        if smoothing_time_constant > 0.0 and power.size > 3:
+            sample_rate = 1.0 / output_interval
+            alpha = 1.0 - np.exp(-1.0 / (sample_rate * smoothing_time_constant))
+            power = signal.filtfilt(
+                [alpha],
+                [1.0, -(1.0 - alpha)],
+                power,
+                method="gust",
+            )
+        return times, np.maximum(power, 0.0)
 
     def td_ratio(
         self,
@@ -380,12 +542,21 @@ class SleepAnalyzer:
         eeg_channel: str | None = None,
         emg_channel: str = "EMG",
         hp_cutoff: float = 0.5,
+        eeg_filter_order: int = 2,
+        eeg_filter_phase: FilterPhase | None = None,
         bp_low: float = 5.0,
         bp_high: float = 45.0,
+        emg_transition_width: float = 1.8,
         emg_time_constant: float = 5.0,
         epoch_window: float | None = None,
         overlap: float = 0.5,
         bands: dict[str, tuple[float, float]] | None = None,
+        profile: AnalysisProfile | None = None,
+        band_power_method: BandPowerMethod | None = None,
+        output_interval: float | None = None,
+        band_smoothing_time_constant: float = 5.0,
+        spike2_fft_size: int = 256,
+        spike2_target_sfreq: float = 512.0,
     ) -> dict:
         """Compute all band powers, EMG RMS, and T:D ratio in one call.
 
@@ -409,29 +580,109 @@ class SleepAnalyzer:
             ``beta_power``, ``gamma_power``,
             ``emg_rms``, ``td_ratio``.
         """
+        if profile is None:
+            profile = self.profile
+        if profile not in ("standard", "spike2"):
+            raise ValueError("profile must be 'standard' or 'spike2'.")
+
         if epoch_window is None:
-            epoch_window = self.epoch_len
+            epoch_window = float(self.epoch_len)
+        else:
+            epoch_window = float(epoch_window)
 
         # Resolve effective EEG channel: explicit arg overrides instance default.
         _eeg_ch = eeg_channel if eeg_channel is not None else self.eeg_channel
+        if profile == "spike2" and _eeg_ch is None:
+            raise ValueError(
+                "Spike2-compatible mode requires an explicit eeg_channel "
+                "(for example 'EEG2'); hidden EEG averaging is disabled."
+            )
 
-        if (self._features is not None and
-            self._overlap_cached == overlap and
-            self._window_cached == epoch_window and
-            self._eeg_channel_cached == _eeg_ch):
-            return self._features
+        if eeg_filter_phase is None:
+            eeg_filter_phase = "causal" if profile == "spike2" else "zero"
+        if band_power_method is None:
+            band_power_method = "spike2_smooth" if profile == "spike2" else "stft"
+        if output_interval is None and band_power_method == "spike2_smooth":
+            output_interval = 0.1
 
         if bands is None:
-            bands = BANDS
+            bands = SPIKE2_BANDS if profile == "spike2" else BANDS
 
-        eeg = self.filter_eeg(_eeg_ch, hp_cutoff)
-        emg_filt = self.filter_emg(emg_channel, bp_low, bp_high)
-        emg_envelope = self.emg_rms(emg_filt, emg_time_constant)
+        cache_key = _FeatureCacheKey(
+            profile=profile,
+            eeg_channel=_eeg_ch,
+            emg_channel=emg_channel,
+            eeg_filter=EEGFilterConfig(
+                cutoff_hz=float(hp_cutoff),
+                order=int(eeg_filter_order),
+                phase=eeg_filter_phase,
+            ),
+            bp_low=float(bp_low),
+            bp_high=float(bp_high),
+            emg_transition_width=float(emg_transition_width),
+            emg_time_constant=float(emg_time_constant),
+            band_power=BandPowerConfig(
+                method=band_power_method,
+                output_interval=(
+                    None if output_interval is None else float(output_interval)
+                ),
+                smoothing_time_constant=float(band_smoothing_time_constant),
+                window=float(epoch_window),
+                overlap=float(overlap),
+                fft_size=(
+                    int(spike2_fft_size)
+                    if band_power_method == "spike2_smooth"
+                    else None
+                ),
+                target_sfreq=(
+                    float(spike2_target_sfreq)
+                    if band_power_method == "spike2_smooth"
+                    else None
+                ),
+            ),
+            bands=tuple(
+                (name, float(edges[0]), float(edges[1]))
+                for name, edges in sorted(bands.items())
+            ),
+        )
+
+        if self._features is not None and self._feature_cache_key == cache_key:
+            return self._features
+
+        eeg = self.filter_eeg(
+            _eeg_ch,
+            hp_cutoff=hp_cutoff,
+            order=eeg_filter_order,
+            phase=eeg_filter_phase,
+        )
+        emg_filt = self.filter_emg(
+            emg_channel,
+            bp_low=bp_low,
+            bp_high=bp_high,
+            transition_width=emg_transition_width,
+        )
+        if profile == "spike2":
+            emg_envelope = self.emg_rms_spike2_like(emg_filt, emg_time_constant)
+            emg_rms_method = "centered_rms"
+        else:
+            emg_envelope = self.emg_rms(emg_filt, emg_time_constant)
+            emg_rms_method = "causal_exponential"
 
         times: np.ndarray | None = None
         powers: dict[str, np.ndarray] = {}
         for name, band in bands.items():
-            t, p = self.band_power(eeg, band, epoch_window, overlap)
+            if band_power_method == "stft":
+                t, p = self.band_power(eeg, band, epoch_window, overlap)
+            else:
+                assert output_interval is not None
+                t, p = self.band_power_spike2_like(
+                    eeg,
+                    band,
+                    output_interval=output_interval,
+                    smoothing_time_constant=band_smoothing_time_constant,
+                    fft_size=spike2_fft_size,
+                    target_sfreq=spike2_target_sfreq,
+                )
             times = t
             powers[name] = p
 
@@ -451,18 +702,52 @@ class SleepAnalyzer:
             **{f"{k}_power": v for k, v in powers.items()},
             "emg_rms": emg_rms_epochs,
             "td_ratio": td,
+            "analysis_profile": profile,
+            "eeg_channel": _eeg_ch if _eeg_ch is not None else "average",
+            "band_power_method": band_power_method,
+            "band_definitions": {k: tuple(v) for k, v in bands.items()},
+            "feature_config": {
+                "profile": profile,
+                "eeg_channel": _eeg_ch if _eeg_ch is not None else "average",
+                "eeg_filter": {
+                    "cutoff_hz": float(hp_cutoff),
+                    "order": int(eeg_filter_order),
+                    "phase": eeg_filter_phase,
+                },
+                "emg_filter": {
+                    "bp_low": float(bp_low),
+                    "bp_high": float(bp_high),
+                    "transition_width": float(emg_transition_width),
+                },
+                "emg_time_constant": float(emg_time_constant),
+                "emg_rms_method": emg_rms_method,
+                "band_power": {
+                    "method": band_power_method,
+                    "output_interval": output_interval,
+                    "smoothing_time_constant": float(band_smoothing_time_constant),
+                    "window": float(epoch_window),
+                    "overlap": float(overlap),
+                    "fft_size": (
+                        int(spike2_fft_size)
+                        if band_power_method == "spike2_smooth"
+                        else None
+                    ),
+                    "target_sfreq": (
+                        float(spike2_target_sfreq)
+                        if band_power_method == "spike2_smooth"
+                        else None
+                    ),
+                },
+                "bands": {k: list(v) for k, v in bands.items()},
+            },
         }
-        self._overlap_cached = overlap
-        self._window_cached = epoch_window
-        self._eeg_channel_cached = _eeg_ch
+        self._feature_cache_key = cache_key
         return self._features
 
     def invalidate_cache(self) -> None:
         """Clear the cached features (call after changing parameters)."""
         self._features = None
-        self._overlap_cached = None
-        self._window_cached = None
-        self._eeg_channel_cached = None
+        self._feature_cache_key = None
 
     # ------------------------------------------------------------------ #
     # Internal helpers

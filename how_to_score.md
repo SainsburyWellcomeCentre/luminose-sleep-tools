@@ -31,7 +31,7 @@ This guide is for harris lab focks who want to understand exactly how the packag
 4. **Inspect and correct** epochs interactively in the Scope viewer.
 5. **Save** the session to JSON and/or export a hypnogram CSV.
 
-All parameters (epoch length, filter cutoffs, thresholds) are configurable at runtime — nothing is hard-coded.
+All parameters (epoch length, analysis profile, EEG channel, filter cutoffs, thresholds) are configurable at runtime — nothing is hard-coded.
 
 ---
 
@@ -54,13 +54,20 @@ All parameters (epoch length, filter cutoffs, thresholds) are configurable at ru
 
 All values are in SI base units (V, V²/Hz·Hz). The Scope viewer converts to display units (µV, µV²/Hz) for the spinboxes and hypnogram; the auto-scorer does the same conversion internally so threshold values entered in the GUI match what you see on screen.
 
+`SleepAnalyzer` has two analysis profiles:
+
+- `profile="standard"` keeps the original sleep-tools behavior: zero-phase EEG drift filtering, hidden EEG1+EEG2 averaging when `eeg_channel=None`, and Hann-windowed STFT band powers.
+- `profile="spike2"` requires an explicit EEG channel such as `"EEG2"`, uses causal EEG drift filtering, OSD4-like centred EMG RMS, sets delta to `0.0-4.0 Hz`, and computes an OSD4 `Pw(...)`-style band-power approximation on a 0.1 s output grid by default.
+
+From `OSD4.s2s`, EEG is interpolated to about 512 Hz before band power; the OSD4 defaults are delta `0-4 Hz`, theta `6-10 Hz`, 256-point Hann FFT, 0.1 s output grid, and 5 s smoothing. Spike2's exact `Pw(...)` implementation is not public, so the Spike2 profile should still be treated as a compatibility approximation.
+
 ---
 
 ### EEG (high-pass filtered)
 
 **Goal**: remove slow DC drift (< 0.5 Hz) while preserving sleep-relevant oscillations.
 
-**Implementation** (`filter_eeg`, `analysis.py:126`):
+**Implementation** (`filter_eeg`, `analysis.py`):
 
 ```
 1. Design a 2nd-order Butterworth low-pass filter at 0.5 Hz:
@@ -73,10 +80,10 @@ All values are in SI base units (V, V²/Hz·Hz). The Scope viewer converts to di
    eeg_filtered = raw_eeg − drift
 ```
 
-This is equivalent to a high-pass at ~0.5 Hz but implemented as a subtraction, which exactly matches the Spike2 channel script (`EEGorig − EEGlow`). The zero-phase `sosfiltfilt` call means there is no phase distortion in the retained frequencies.
+This is equivalent to a high-pass at ~0.5 Hz but implemented as a subtraction. In `standard` mode, the zero-phase `sosfiltfilt` call means there is no phase distortion in the retained frequencies. In `spike2` mode, sleep-tools uses causal `scipy.signal.lfilter`, which matches the observed Spike2 drift channel behavior more closely.
 
 **Why a Butterworth LP subtraction rather than a direct HP?**
-Spike2's scripting environment computes the drift channel explicitly and plots it alongside the filtered trace. Subtracting in Python produces identical results and keeps the same conceptual pipeline.
+Spike2's scripting environment computes the drift channel explicitly and plots it alongside the filtered trace. Subtracting in Python keeps the same conceptual pipeline; the selected profile controls whether the drift filter is zero-phase or causal.
 
 ---
 
@@ -419,8 +426,7 @@ from sleep_tools import save_to_h5
 # With features and labels from a scoring session
 path = save_to_h5(rec, "output/LUMI-0013_dataset.h5",
                   analyzer=ana,
-                  labels=session.labels,
-                  epoch_len=5.0,
+                  session=session,
                   overwrite=True)
 ```
 
@@ -429,9 +435,10 @@ The HDF5 file contains everything needed for downstream analysis without the pac
 - `/epochs/times` — epoch centre times (float64, seconds)
 - `/epochs/labels` — per-epoch state strings (U/W/N/R)
 - `/epochs/features/{delta_power, theta_power, alpha_power, beta_power, gamma_power, emg_rms, td_ratio}` — all features, NaN if not computed
+- `/analysis/times` and `/analysis/features/*` — native analyzer time series when session epochs required interpolation
 - `/annotations/` — TTL event times from TSV (if loaded)
 
-Every dataset and group carries self-describing attributes (`unit`, `description`, `frequency_range_hz`, `sleep_relevance`, `band_definitions`).
+Every dataset and group carries self-describing attributes (`unit`, `description`, `frequency_range_hz`, `sleep_relevance`, `band_definitions`). Root attrs include `analysis_profile`, `eeg_channel`, and `feature_source`, so downstream code can see whether epoch features are native or interpolated from the analyzer grid.
 
 ---
 

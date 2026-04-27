@@ -16,7 +16,7 @@ Follows Julia's Spike2 sleep-scoring protocol, reimplemented in open-source Pyth
 - **Video export** (`Scope.make_video`) — render a scrolling MP4 of any signals with configurable window, speed, and y-limits
 - **Export** curated HDF5 datasets (`save_to_h5`) with raw signals, epoch features, and sleep-stage labels — NaN placeholders for any feature not yet computed, so the schema is always consistent
 - **Score** sleep interactively via a Qt GUI: Wake, NREM, REM — auto-scoring with adjustable thresholds, manual epoch correction, undo/redo, save/load
-- **Align** TTL sync triggers from a behavioral rig (Stage 3 — in progress)
+- **Align** TTL sync triggers from a behavioral rig with `SyncAligner`
 
 ## Installation
 
@@ -92,6 +92,10 @@ rec = SleepRecording.from_edf("path/to/recording_export.edf")
 ana = SleepAnalyzer(rec, epoch_len=5.0, eeg_channel=None)
 features = ana.compute_all_features()
 
+# Spike2-compatible analysis uses an explicit EEG channel and causal filtering.
+spike2_ana = SleepAnalyzer(rec, epoch_len=5.0, eeg_channel="EEG2", profile="spike2")
+spike2_features = spike2_ana.compute_all_features()
+
 # Auto-score with default thresholds
 session = ScoringSession(rec, epoch_len=5.0)
 session.auto_score(features)
@@ -151,6 +155,7 @@ The window features:
 - **Theme** — `☯` button toggles dark / light. Spinbox and combobox arrows adapt to the theme (white on dark, black on light).
 - **? Help** — Leftmost transport button; step-by-step scoring guide with platform-aware shortcuts (Cmd on macOS).
 - **EEG Channel** — `∿` button in the transport bar (right of `⊕`) opens a popup menu to select which EEG signal drives band-power and classification: **Average (EEG1+EEG2)** (default), **EEG1 only**, or **EEG2 only**. Button label updates live. Click **Analyze Signals** after changing to recompute features.
+- **Analysis Profile** — `Std` / `Spike2` button beside the EEG selector chooses the feature pipeline. Spike2 mode disables hidden EEG averaging and auto-selects EEG2 when available.
 
 ## Video Export
 
@@ -216,12 +221,14 @@ HDF5 layout: `/signals/{EEG1,EEG2,EMG}`, `/epochs/times`, `/epochs/labels`,
 `/epochs/features/{delta_power,theta_power,alpha_power,beta_power,gamma_power,emg_rms,td_ratio}`,
 `/annotations/` (if TSV loaded).
 
+When saving with `session=...`, `/epochs/times` and `/epochs/features/*` always use the session epoch grid. If analyzer features were computed on a different timebase, they are interpolated onto the session epochs and the native analyzer time series is preserved under `/analysis/times` and `/analysis/features/*`.
+
 Every dataset and group carries self-describing attributes so the file is readable without
 the package:
 
 | Location | Attributes written |
 |----------|--------------------|
-| `/` (root) | `animal_id`, `experiment_id`, `start_datetime`, `sfreq`, `duration_s`, `n_samples`, `channels`, `epoch_len`, `n_epochs`, `features_computed`, `sleep_tools_version`, `band_definitions` (JSON), `saved_at` |
+| `/` (root) | `animal_id`, `experiment_id`, `start_datetime`, `sfreq`, `duration_s`, `n_samples`, `channels`, `epoch_len`, `n_epochs`, `features_computed`, `analysis_profile`, `eeg_channel`, `feature_source`, `sleep_tools_version`, `band_definitions` (JSON), `saved_at` |
 | `/signals/{ch}` | `unit="V"`, `sfreq` |
 | `/epochs/times` | `units="s"`, `description` |
 | `/epochs/labels` | `description` (label key: U/W/N/R) |
@@ -260,7 +267,7 @@ for name, info in FEATURE_INFO.items():
 | `emg_rms` | 5.0 – 45.0 (EMG bandpass) | V | High in Wake; flat (atonia) in REM; low in NREM |
 | `td_ratio` | theta / delta (derived) | dimensionless | Peak in REM; low in NREM; moderate in Wake |
 
-Band powers use Hann-windowed STFT (`scipy.signal.spectrogram`, `scaling="density"`) integrated over each band with `np.trapezoid`. EMG RMS uses an FIR bandpass (5–45 Hz, transition 1.8 Hz) followed by a causal exponential smoother (τ = 5 s).
+In `standard` mode, band powers use Hann-windowed STFT (`scipy.signal.spectrogram`, `scaling="density"`) integrated over each band with `np.trapezoid`. EMG RMS uses an FIR bandpass (5–45 Hz, transition 1.8 Hz) followed by a causal exponential smoother (τ = 5 s). In `spike2` mode, EEG drift filtering is causal, EMG RMS uses an OSD4-like centred window, and band powers use an OSD4 `Pw(...)`-style approximation on a 0.1 s grid by default.
 
 ## Example Scripts
 
@@ -310,6 +317,14 @@ Mirrors Julia's Spike2 protocol:
 | EEG | IIR 2nd-order Butterworth LP at 0.5 Hz → subtract drift (≈ HP at 0.5 Hz) |
 | EMG | FIR bandpass 5–45 Hz (transition 1.8 Hz) → exponential RMS envelope (τ = 5 s) |
 | Band power | STFT with Hann window (default 5 s, 50 % overlap) |
+
+For closest Spike2 compatibility:
+
+```python
+ana = SleepAnalyzer(rec, epoch_len=5.0, eeg_channel="EEG2", profile="spike2")
+```
+
+Spike2's exact `Pw(...)` band-power implementation is not public; the package exposes a compatible approximation based on the OSD4 script defaults and keeps the standard STFT pipeline as the backward-compatible default.
 
 ## Package Structure
 

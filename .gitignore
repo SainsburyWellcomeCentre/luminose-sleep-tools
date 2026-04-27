@@ -54,6 +54,9 @@ output/
 *.mp4
 *.avi
 
+# Use large file not to include any large files to be pushed
+large_file_*
+
 # Scored outputs (generated)
 *.json
 *.csv

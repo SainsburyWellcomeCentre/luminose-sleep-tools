@@ -322,8 +322,13 @@ class Scope:
                 self_w._y_offsets: dict[str, float] = {}  # per-channel DC offset for centering
                 self_w._lockable_widgets: list = []  # disabled during playback
 
-                # ── EEG channel selection for analysis ────────────────
-                self_w._eeg_channel_sel: str | None = None  # None = average
+                # ── Analysis profile / EEG channel selection ──────────
+                self_w._analysis_profile: str = (
+                    getattr(ana, "profile", "standard") if ana else "standard"
+                )
+                self_w._eeg_channel_sel: str | None = (
+                    getattr(ana, "eeg_channel", None) if ana else None
+                )
 
                 # ── Scoring state ──────────────────────────────────────
                 self_w._session: ScoringSession | None = None
@@ -599,6 +604,17 @@ class Scope:
                 self_w._eeg_btn.clicked.connect(self_w._show_eeg_menu)
                 self_w._update_eeg_btn_text()
                 tl.addWidget(self_w._eeg_btn)
+
+                # Analysis profile selector button
+                self_w._profile_btn = QToolButton()
+                self_w._profile_btn.setFixedSize(58, 32)
+                self_w._profile_btn.setToolTip(
+                    "Analysis profile for filtering and feature computation\n"
+                    "Re-run 'Analyze Signals' after changing"
+                )
+                self_w._profile_btn.clicked.connect(self_w._show_profile_menu)
+                self_w._update_profile_btn_text()
+                tl.addWidget(self_w._profile_btn)
 
                 # Theme Toggle
                 self_w._theme_btn = QToolButton()
@@ -1427,6 +1443,50 @@ class Scope:
                 labels = {None: "∿ Avg", "EEG1": "∿ EEG1", "EEG2": "∿ EEG2"}
                 self_w._eeg_btn.setText(labels.get(self_w._eeg_channel_sel, "∿ Avg"))
 
+            def _update_profile_btn_text(self_w):
+                """Update the transport-bar profile button label."""
+                label = "Spike2" if self_w._analysis_profile == "spike2" else "Std"
+                self_w._profile_btn.setText(label)
+
+            def _ensure_valid_profile_channel(self_w):
+                """Keep Spike2 mode from silently averaging EEG channels."""
+                if self_w._analysis_profile != "spike2":
+                    return
+                if self_w._eeg_channel_sel is not None:
+                    return
+                rec = self_w._recording
+                ch_names = rec.raw.ch_names if rec else []
+                if "EEG2" in ch_names:
+                    self_w._eeg_channel_sel = "EEG2"
+                elif "EEG1" in ch_names:
+                    self_w._eeg_channel_sel = "EEG1"
+                self_w._update_eeg_btn_text()
+
+            def _show_profile_menu(self_w):
+                """Open popup menu for analysis profile selection."""
+                menu = QMenu(self_w)
+                grp = QActionGroup(menu)
+                grp.setExclusive(True)
+
+                def _make_action(label: str, value: str):
+                    act = QAction(label, menu)
+                    act.setCheckable(True)
+                    act.setChecked(self_w._analysis_profile == value)
+                    act.setData(value)
+                    grp.addAction(act)
+                    menu.addAction(act)
+                    return act
+
+                _make_action("Standard", "standard")
+                _make_action("Spike2-compatible", "spike2")
+                chosen = menu.exec(self_w._profile_btn.mapToGlobal(
+                    self_w._profile_btn.rect().bottomLeft()
+                ))
+                if chosen is not None:
+                    self_w._analysis_profile = chosen.data()
+                    self_w._ensure_valid_profile_channel()
+                    self_w._update_profile_btn_text()
+
             def _show_eeg_menu(self_w):
                 """Open popup menu for EEG channel selection."""
                 rec = self_w._recording
@@ -1448,7 +1508,9 @@ class Scope:
                     return act
 
                 avg_act = _make_action("∿  Average (EEG1+EEG2)", None)
-                avg_act.setEnabled(has_eeg1 and has_eeg2)
+                avg_act.setEnabled(
+                    has_eeg1 and has_eeg2 and self_w._analysis_profile != "spike2"
+                )
                 _make_action("∿  EEG1 only", "EEG1").setEnabled(has_eeg1)
                 _make_action("∿  EEG2 only", "EEG2").setEnabled(has_eeg2)
 
@@ -1457,10 +1519,12 @@ class Scope:
                 ))
                 if chosen is not None:
                     self_w._eeg_channel_sel = chosen.data()
+                    self_w._ensure_valid_profile_channel()
                     self_w._update_eeg_btn_text()
 
             def _on_analyze(self_w):
                 if self_w._recording:
+                    self_w._ensure_valid_profile_channel()
                     epoch_len = (
                         self_w._epoch_len_spin.value()
                         if self_w._epoch_len_spin is not None
@@ -1470,6 +1534,7 @@ class Scope:
                         self_w._recording,
                         eeg_channel=self_w._eeg_channel_sel,
                         epoch_len=epoch_len,
+                        profile=self_w._analysis_profile,
                     )
                     self_w._init_data(self_w._recording, self_w._analyzer, self_w._requested_signals)
                     self_w._populate_sidebar()
@@ -1625,6 +1690,17 @@ class Scope:
                 """Read threshold spinboxes, run auto-score, rebuild figure."""
                 if not self_w._recording or not self_w._analyzer:
                     return
+
+                self_w._ensure_valid_profile_channel()
+                if (
+                    getattr(self_w._analyzer, "profile", "standard")
+                    != self_w._analysis_profile
+                    or getattr(self_w._analyzer, "eeg_channel", None)
+                    != self_w._eeg_channel_sel
+                ):
+                    self_w._analyzer.profile = self_w._analysis_profile
+                    self_w._analyzer.eeg_channel = self_w._eeg_channel_sel
+                    self_w._analyzer.invalidate_cache()
 
                 # Apply epoch length from spinbox before computing features
                 if self_w._epoch_len_spin is not None:

@@ -296,15 +296,224 @@ Acceptance: open a recording → Analyze Signals → Run Classification → adju
 
 Example script: `examples/classify_sleep.py`
 
-### Stage 3 — Sync Trigger Alignment
+### Stage 3 — Sync Trigger Alignment ✅ COMPLETE
 **Goal**: Extract TTL events from TSV, identify rise/fall edges, align to Bpod trial timestamps.
 
 Tasks:
-1. `sync.py`: parse TTL events, deduplicate channels, detect pulse trains
-2. Bpod alignment stub: accept Bpod timestamp array, compute offset, return aligned event times
-3. Visualization: overlay TTL events on trace panels
+1. `sync.py`: parse TTL events, deduplicate channels, detect pulse trains ✅
+2. Bpod alignment stub: accept Bpod timestamp array, compute offset, return aligned event times ✅
+3. Visualization: overlay TTL events on trace panels ✅
 
 Acceptance: given a TSV file, correctly extract all Rise/Fall times; alignment stub runs without error.
+
+Notes:
+- `SyncAligner(recording)` is exported from `sleep_tools`.
+- `extract_ttl_events(edge="both")` preserves per-channel TTL rows.
+- `deduplicate_channels()` collapses simultaneous EEG1/EEG2/EMG TTL rows.
+- `detect_pulses()` pairs rise/fall edges into `(rise_time, fall_time, duration)`.
+- `align_to_bpod()` computes a constant median offset between TTL rises and Bpod timestamps.
+- `plot_events()` overlays deduplicated TTL edges on any Matplotlib axis.
+
+---
+
+## Spike2 Compatibility & HDF5 Consistency Plan
+
+This section captures the investigation from
+`example_data/comparison_with_spike2_to_debug_inconsistencies/` so a future
+session can continue without re-deriving the findings.
+
+### Comparison Findings
+
+Files inspected:
+- Spike2 export: `sub-003_ses-001_recording-001_0001_2026-03-25_16_13_47_0to300s-using_spike2.mat`
+- sleep-tools export: `sub-003_ses-001_recording-001_0001_2026-03-25_16_13_47_using_sleeptools.h5`
+- Raw EDF: `sub-003_ses-001_recording-001_0001_2026-03-25_16_13_47.edf`
+
+Observed facts:
+- Raw signals match exactly after unit conversion. Spike2 MAT stores raw data in `uV`; sleep-tools/MNE stores raw data in `V`. Multiplying H5/EDF values by `1e6` gives correlation approximately 1.0 for EEG1, EEG2, and EMG.
+- Spike2 filtered EEG in the MAT file uses `EEG2`, not EEG1 and not an EEG1+EEG2 average. Numerically, `EEGFilt == EEG2 - EEGLow`.
+- Spike2 `EEGLow` matches a causal 2nd-order Butterworth low-pass (`scipy.signal.lfilter`) at 0.5 Hz. Current sleep-tools uses zero-phase `signal.sosfiltfilt` in `SleepAnalyzer.filter_eeg`, so the filtered signal shape differs even when using the same channel.
+- Spike2 power traces are not the same algorithm as current sleep-tools STFT power. The MAT comments show `Power in band: 0.0 - 4.0 Hz; tc: 5.0s` for delta and `6.0 - 10.0 Hz; tc: 5.0s` for theta, with an output interval of about 0.1 s. Current sleep-tools uses Hann-windowed STFT band power with default 5 s windows and 50% overlap.
+- Spike2 `EMGFilt` in the MAT file is positive and envelope-like, roughly `20-58 uV`, so compare it to sleep-tools `emg_rms`, not to the centered FIR band-passed waveform returned by `filter_emg`.
+- The inspected H5 is internally inconsistent: root `epoch_len = 10.0`, `/epochs/times` and `/epochs/labels` length `17547`, but every `/epochs/features/*` dataset has length `70187`. This happens because `save_to_h5(..., analyzer=..., session=...)` computes analyzer features first, then replaces `times` with `session.times` without resampling or rebuilding the feature arrays.
+
+### Design Principle
+
+Do not silently change current outputs. Add explicit, runtime-configurable
+analysis profiles:
+
+- `standard`: current sleep-tools behavior, backward-compatible.
+- `spike2`: compatibility mode matching Julia's Spike2 workflow as closely as practical.
+
+All parameters must remain runtime-configurable, per `CLAUDE.md`: epoch length,
+filter cutoffs, filter phase, EEG channel, band definitions, smoothing time
+constants, output interval, and thresholds.
+
+### Implementation Order
+
+1. **Fix HDF5 feature/epoch alignment first** ✅
+   - Add a helper in `io.py`, e.g. `_align_features_to_epoch_times(features, epoch_times)`.
+   - When `session is not None`, always write `/epochs/features/*` with the same length as `session.times`.
+   - If analyzer feature times differ from session times, interpolate scalar feature arrays onto `session.times`.
+   - Consider preserving the original analyzer timebase under `/analysis/times` and `/analysis/features/{feature}`.
+   - Add root/group attrs such as `analysis_profile`, `eeg_channel`, `feature_timebase`, and `feature_source` (`native_epoch`, `interpolated_from_analysis`, etc.).
+
+2. **Fix analyzer cache correctness** ✅
+   - Current `compute_all_features()` cache keys only track overlap, window, and EEG channel.
+   - Cache identity must include profile, EEG filter config, EMG filter config, band-power method, band definitions, EMG RMS time constant, epoch/window/output interval, and selected channel.
+   - Prefer a frozen config object over loose cache fields.
+   - Ensure GUI changes to `analyzer.epoch_len` cannot reuse stale feature arrays.
+
+3. **Add explicit analysis profiles** ✅
+   - Suggested API:
+     ```python
+     ana = SleepAnalyzer(rec, epoch_len=5.0, eeg_channel="EEG2", profile="spike2")
+     ```
+   - Suggested config concepts:
+     ```python
+     AnalysisProfile = Literal["standard", "spike2"]
+
+     @dataclass(frozen=True)
+     class EEGFilterConfig:
+         cutoff_hz: float = 0.5
+         order: int = 2
+         phase: Literal["zero", "causal"] = "zero"
+
+     @dataclass(frozen=True)
+     class BandPowerConfig:
+         method: Literal["stft", "spike2_smooth"] = "stft"
+         output_interval: float | None = None
+         smoothing_time_constant: float = 5.0
+         window: float = 5.0
+         overlap: float = 0.5
+     ```
+
+4. **Implement Spike2-compatible EEG filtering** ✅
+   - Keep current zero-phase filtering as the `standard` default.
+   - Add causal filtering with `signal.lfilter` for `profile="spike2"`.
+   - Spike2-compatible defaults: 2nd-order Butterworth low-pass, cutoff 0.5 Hz, causal phase.
+   - Make EEG channel selection explicit. Spike2 protocol says to choose the best EEG channel; avoid hidden averaging in Spike2 mode.
+
+5. **Clarify EMG waveform vs envelope**
+   - Keep `filter_emg()` as centered FIR band-passed waveform.
+   - Keep/use `emg_rms()` as the positive envelope for scoring.
+   - In GUI and docs, label these separately as `EMG filtered` and `EMG RMS`/`EMG envelope`.
+   - In Spike2 validation, compare Spike2 `EMGFilt` to sleep-tools `emg_rms`.
+
+6. **Implement Spike2-like band power** ✅ approximation implemented; validation still pending
+   - Keep existing STFT implementation as `method="stft"`.
+   - Add a Spike2-like method, e.g. `band_power_spike2_like()`.
+   - Defaults for Spike2 compatibility:
+     - delta band `0.0-4.0 Hz` to match MAT comments
+     - theta band `6.0-10.0 Hz`
+     - smoothing time constant `5.0 s`
+     - output interval `0.1 s`
+     - OSD4-derived defaults: EEG target sample rate `512 Hz`, Hann FFT size `256`, chunked FFT implementation to avoid dense full-night spectrogram allocation
+   - Validate against the MAT export before claiming exact compatibility. If Spike2's proprietary "Power in band" details cannot be matched exactly, document this as a Spike2-compatible approximation with measured error bounds.
+
+8. **Inspect OSD4 Spike2 script** ✅
+   - `OSD.s2cx` is a sampling configuration: EEG channels at ~1024 Hz, EMG channels at ~5 kHz, output sequencer `GH_OSD3.pls`.
+   - `OSD4.s2s` is the analysis script: EMG uses Spike2 RMS process with `5 s (= +/-5 s)` default; EEG is interpolated to ~512 Hz before band power; band power virtual channels use `Pw(eegch, stepsz, low, high)` sampled every `0.1 s`, then Smooth channel process with default `tc=5 s`.
+   - sleep-tools `profile="spike2"` now uses centred RMS for EMG and an OSD4 `Pw(...)`-style chunked Hann FFT approximation rather than the earlier causal bandpass-square approximation.
+
+7. **Update Scope GUI** ✅
+   - Add an Analysis Profile control: `Standard` vs `Spike2-compatible`.
+   - Make EEG channel selection prominent in Spike2 mode.
+   - Consider disabling `Average (EEG1+EEG2)` in Spike2 mode unless explicitly selected.
+   - When saving H5, include selected profile/channel/config attrs.
+   - Ensure classification uses features aligned to the scoring session epoch length/timebase.
+
+### Tests To Add
+
+Core unit/integration tests:
+- `test_filter_eeg_standard_zero_phase_matches_sosfiltfilt` ✅
+- `test_filter_eeg_spike2_causal_matches_lfilter` ✅
+- `test_filter_eeg_spike2_uses_selected_channel_not_average` ✅ via explicit-channel requirement
+- `test_compute_all_features_cache_changes_with_profile` ✅
+- `test_compute_all_features_cache_changes_with_epoch_len` ✅
+- `test_save_to_h5_session_features_match_epoch_count` ✅
+- `test_save_to_h5_preserves_analysis_timeseries_when_feature_timebase_differs` ✅
+- `test_scoring_session_from_h5_roundtrip_after_feature_alignment` ✅
+
+Optional slow validation tests using the comparison folder:
+- Raw MAT vs EDF/H5 signal agreement after `1e6` unit conversion.
+- Spike2 `EEGLow` vs causal low-pass of EEG2.
+- Spike2 `EEGFilt` vs `EEG2 - causal_lowpass(EEG2)`.
+- Spike2 `EMGFilt` vs sleep-tools `emg_rms`.
+- Spike2 delta/theta/T:D vs Spike2-profile sleep-tools outputs on the 0.1 s grid.
+- H5 consistency: every `/epochs/features/*` length equals `/epochs/times` length, labels length equals epoch count, and profile/channel attrs exist.
+
+Mark large-data comparison tests as slow or optional so normal CI does not
+depend on the large local EDF/MAT/H5 files.
+
+### Validation Utility
+
+Add a repeatable validation script:
+
+```text
+scripts/validate_spike2_comparison.py
+```
+
+Suggested inputs:
+- EDF path
+- Spike2 MAT path
+- sleep-tools H5 path or output path
+
+Suggested outputs:
+- Printed metrics table
+- Optional CSV metrics
+- Optional PDF overlay plot
+
+Suggested metrics:
+- Raw signal unit conversion slope/correlation
+- EEG low-pass agreement
+- EEG filtered agreement
+- EMG RMS/envelope agreement
+- Delta/theta/T:D agreement
+- H5 schema and shape consistency
+
+### Documentation Updates
+
+After implementation, update:
+
+- `CLAUDE.md`
+  - Add analysis profiles.
+  - Correct the current claim that zero-phase filtering exactly matches Spike2.
+  - Document H5 feature alignment rules.
+
+- `agent.md`
+  - Keep this plan updated as tasks are completed.
+  - Move completed items into the stage breakdown when done.
+
+- `how_to_score.md`
+  - Explain `standard` vs `spike2` modes.
+  - Clarify EEG channel selection.
+  - Clarify EMG filtered waveform vs EMG RMS/envelope.
+  - Document units: raw stored in `V`, display in `uV`, display power in `uV^2`.
+
+- `README.md`
+  - Add a short Spike2-compatible example:
+    ```python
+    ana = SleepAnalyzer(rec, eeg_channel="EEG2", profile="spike2")
+    ```
+  - Add an H5 schema note for `/epochs/features` vs optional `/analysis/features`.
+
+Status: `CLAUDE.md`, `how_to_score.md`, `README.md`, and `agent.md` updated for analysis profiles, H5 feature alignment, and Stage 3 sync alignment. Dedicated Spike2 MAT validation utility remains pending.
+
+### Recommended Completion Order
+
+1. H5 feature/epoch alignment.
+2. Analyzer cache-key correctness.
+3. Analysis profile plumbing.
+4. Causal Spike2 EEG filtering.
+5. Spike2-like band power.
+6. Stage 3 sync alignment.
+7. GUI controls for profile/channel selection.
+8. Optional comparison validation script.
+9. README, `how_to_score.md`, `CLAUDE.md`, and `agent.md` updates.
+
+Note: on this workspace's case-insensitive filesystem, `AGENT.md` and
+`agent.md` resolve to the same path. Keep `agent.md` as the canonical file.
 
 ---
 

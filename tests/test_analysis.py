@@ -1,5 +1,7 @@
 """Integration tests for sleep_tools.analysis."""
 import numpy as np
+import pytest
+from scipy import signal
 
 from sleep_tools import SleepAnalyzer, SleepRecording
 
@@ -65,3 +67,60 @@ def test_compute_all_features_cached(recording: SleepRecording, analyzer: SleepA
     f1 = analyzer.compute_all_features()
     f2 = analyzer.compute_all_features()
     assert f1 is f2  # same object — cached
+
+
+def test_filter_eeg_standard_zero_phase_matches_sosfiltfilt(
+    recording: SleepRecording,
+) -> None:
+    analyzer = SleepAnalyzer(recording, epoch_len=5.0)
+    observed = analyzer.filter_eeg("EEG1", hp_cutoff=0.5, phase="zero")
+    data = analyzer._get_channel_data("EEG1")
+    sos = signal.butter(2, 0.5, btype="low", fs=recording.sfreq, output="sos")
+    expected = data - signal.sosfiltfilt(sos, data)
+    np.testing.assert_allclose(observed, expected)
+
+
+def test_filter_eeg_spike2_causal_matches_lfilter(
+    recording: SleepRecording,
+) -> None:
+    analyzer = SleepAnalyzer(
+        recording,
+        epoch_len=5.0,
+        eeg_channel="EEG2",
+        profile="spike2",
+    )
+    observed = analyzer.filter_eeg()
+    data = analyzer._get_channel_data("EEG2")
+    b, a = signal.butter(2, 0.5, btype="low", fs=recording.sfreq)
+    expected = data - signal.lfilter(b, a, data)
+    np.testing.assert_allclose(observed, expected)
+
+
+def test_filter_eeg_spike2_requires_selected_channel(
+    recording: SleepRecording,
+) -> None:
+    analyzer = SleepAnalyzer(recording, epoch_len=5.0, profile="spike2")
+    with pytest.raises(ValueError, match="requires an explicit eeg_channel"):
+        analyzer.compute_all_features()
+
+
+def test_compute_all_features_cache_changes_with_epoch_len(
+    recording: SleepRecording,
+) -> None:
+    analyzer = SleepAnalyzer(recording, epoch_len=5.0)
+    f1 = analyzer.compute_all_features()
+    analyzer.epoch_len = 10.0
+    f2 = analyzer.compute_all_features()
+    assert f1 is not f2
+    assert len(f1["times"]) != len(f2["times"])
+
+
+def test_compute_all_features_cache_changes_with_profile(
+    recording: SleepRecording,
+) -> None:
+    analyzer = SleepAnalyzer(recording, epoch_len=5.0, eeg_channel="EEG2")
+    f1 = analyzer.compute_all_features(profile="standard")
+    f2 = analyzer.compute_all_features(profile="spike2")
+    assert f1 is not f2
+    assert f1["feature_config"]["profile"] == "standard"
+    assert f2["feature_config"]["profile"] == "spike2"
