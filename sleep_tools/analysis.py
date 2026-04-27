@@ -162,10 +162,16 @@ class SleepAnalyzer:
     # ------------------------------------------------------------------ #
 
     def _auto_eeg_channel(self) -> str:
-        """Return the first available EEG channel name (EEG1 before EEG2)."""
-        for ch in ("EEG1", "EEG2"):
-            if ch in self.recording.raw.ch_names:
-                return ch
+        """Return 'average' when both EEG channels exist, else the one that does."""
+        ch_names = self.recording.raw.ch_names
+        has1 = "EEG1" in ch_names
+        has2 = "EEG2" in ch_names
+        if has1 and has2:
+            return "average"
+        if has1:
+            return "EEG1"
+        if has2:
+            return "EEG2"
         raise RuntimeError(
             "No EEG channel (EEG1 or EEG2) found in the recording."
         )
@@ -173,6 +179,16 @@ class SleepAnalyzer:
     def _resolve_eeg_channel(self, channel: str | None) -> str:
         """Resolve an explicit or instance-level EEG channel, auto-selecting if needed."""
         return channel or self.eeg_channel or self._auto_eeg_channel()
+
+    def _get_eeg_data(self, channel: str) -> np.ndarray:
+        """Return EEG signal; averages EEG1+EEG2 when *channel* is ``'average'``."""
+        if channel == "average":
+            ch_names = self.recording.raw.ch_names
+            available = [ch for ch in ("EEG1", "EEG2") if ch in ch_names]
+            if not available:
+                raise RuntimeError("No EEG channel (EEG1 or EEG2) found in the recording.")
+            return np.mean([self._get_channel_data(ch) for ch in available], axis=0)
+        return self._get_channel_data(channel)
 
     def filter_eeg(
         self,
@@ -193,8 +209,8 @@ class SleepAnalyzer:
         Parameters
         ----------
         channel:
-            EEG channel name.  ``None`` defers to :attr:`eeg_channel` or
-            auto-selection.
+            EEG channel name, ``'average'`` to average EEG1+EEG2, or ``None``
+            to defer to :attr:`eeg_channel` or auto-selection.
         hp_cutoff:
             Low-pass cutoff (= effective high-pass corner), in Hz.
         order:
@@ -206,7 +222,7 @@ class SleepAnalyzer:
             Filtered signal, shape ``(n_samples,)``.
         """
         ch = self._resolve_eeg_channel(channel)
-        data = self._get_channel_data(ch)
+        data = self._get_eeg_data(ch)
         fs = self.recording.sfreq
         b, a = signal.butter(order, hp_cutoff, btype="low", fs=fs)
         drift = signal.lfilter(b, a, data)

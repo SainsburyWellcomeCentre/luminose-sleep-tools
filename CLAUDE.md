@@ -2,7 +2,7 @@
 
 This file is automatically loaded by Claude Code and compatible LLM coding assistants.
 For full project context, architecture, and implementation plan see [agent.md](agent.md).
-For signal processing details and scoring workflow see [how_to_score.md](how_to_score.md).
+For signal processing details and scoring workflow see [docs/how_to_score.md](docs/how_to_score.md).
 
 ## Quick Reference
 

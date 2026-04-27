@@ -323,8 +323,8 @@ class Scope:
                 self_w._lockable_widgets: list = []  # disabled during playback
 
                 # ── EEG channel selection ──────────────────────────────
-                self_w._eeg_channel_sel: str | None = (
-                    getattr(ana, "eeg_channel", None) if ana else None
+                self_w._eeg_channel_sel: str = (
+                    getattr(ana, "eeg_channel", None) or "average"
                 )
 
                 # ── Scoring state ──────────────────────────────────────
@@ -1426,7 +1426,7 @@ class Scope:
 
             def _update_eeg_btn_text(self_w):
                 """Update the transport-bar EEG button label to reflect current selection."""
-                labels = {"EEG1": "∿ EEG1", "EEG2": "∿ EEG2"}
+                labels = {"average": "∿ Avg", "EEG1": "∿ EEG1", "EEG2": "∿ EEG2"}
                 self_w._eeg_btn.setText(labels.get(self_w._eeg_channel_sel, "∿"))
 
             def _show_eeg_menu(self_w):
@@ -1449,8 +1449,9 @@ class Scope:
                     menu.addAction(act)
                     return act
 
-                _make_action("∿  EEG1", "EEG1").setEnabled(has_eeg1)
-                _make_action("∿  EEG2", "EEG2").setEnabled(has_eeg2)
+                _make_action("∿  Average (EEG1+EEG2)", "average").setEnabled(has_eeg1 and has_eeg2)
+                _make_action("∿  EEG1 only", "EEG1").setEnabled(has_eeg1)
+                _make_action("∿  EEG2 only", "EEG2").setEnabled(has_eeg2)
 
                 chosen = menu.exec(self_w._eeg_btn.mapToGlobal(
                     self_w._eeg_btn.rect().bottomLeft()
@@ -1492,7 +1493,9 @@ class Scope:
                 self_w._hypno_ax = None
 
                 rec = SleepRecording.from_edf(p)
-                self_w._requested_signals = None # Reset selection for new file
+                self_w._requested_signals = None  # Reset selection for new file
+                self_w._eeg_channel_sel = "average"
+                self_w._update_eeg_btn_text()
                 self_w._init_data(rec, None, None)
                 self_w._populate_sidebar()
                 self_w._update_scrollbar_range()
@@ -2057,7 +2060,8 @@ class Scope:
                     ("2  Choose EEG channel &amp; analyze",
                      "<b>∿</b> button (transport bar, right of ⊕) — select which EEG channel drives "
                      "band-power computation and classification:<br>"
-                     "• <b>∿ EEG1</b> or <b>∿ EEG2</b> — choose the best channel for this recording<br>"
+                     "• <b>∿ Avg</b> (default) — average of EEG1+EEG2<br>"
+                     "• <b>∿ EEG1</b> or <b>∿ EEG2</b> — single channel for this recording<br>"
                      "Set <b>Epoch length</b> (below the button, default 5.0 s) then click "
                      "<b>Analyze Signals</b> in the RECORDING panel to compute EEG power bands, "
                      "EMG RMS, and the T:D ratio. Re-run Analyze after changing the channel or epoch length."),

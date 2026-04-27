@@ -4,7 +4,7 @@ A Python package for inspecting, visualizing, transforming, and scoring rodent s
 
 Follows Julia's Spike2 sleep-scoring protocol, reimplemented in open-source Python.
 
-**[How to score a recording — step-by-step guide](how_to_score.md)**
+**[How to score a recording — step-by-step guide](docs/how_to_score.md)**
 
 ## Features
 
@@ -82,7 +82,7 @@ fig.savefig("overview.png", dpi=150, bbox_inches="tight")
 
 ## Sleep Scoring
 
-See **[how_to_score.md](how_to_score.md)** for a complete guide covering signal processing details and step-by-step scoring instructions.
+See **[docs/how_to_score.md](docs/how_to_score.md)** for a complete guide covering signal processing details and step-by-step scoring instructions.
 
 ```python
 from sleep_tools import SleepRecording, SleepAnalyzer, Scope, ScoringSession
