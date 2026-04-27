@@ -1,5 +1,8 @@
 # sleep-tools
 
+[![Version](https://img.shields.io/badge/version-0.1.0-blue)](https://github.com/SainsburyWellcomeCentre/luminose-sleep-tools/releases/tag/v0.1.0)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
+
 A Python package for inspecting, visualizing, transforming, and scoring rodent sleep recordings from EDF electrophysiology files acquired by the luminose team.
 
 Follows Julia's Spike2 sleep-scoring protocol, reimplemented in open-source Python.
