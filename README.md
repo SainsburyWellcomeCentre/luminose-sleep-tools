@@ -5,7 +5,7 @@
 
 A Python package for inspecting, visualizing, transforming, and scoring rodent sleep recordings from EDF electrophysiology files acquired by the luminose team.
 
-Follows Julia's Spike2 sleep-scoring protocol, reimplemented in open-source Python.
+Follows Julia's Spike2 sleep-scoring protocol, reimplemented in open-source Python. The signal processing workflow emulates the workflow used in Harris lab and can be found in the Spike 2 plugin OSD.s2cx. 
 
 **[How to score a recording — step-by-step guide](docs/how_to_score.md)**
 
