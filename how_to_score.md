@@ -31,7 +31,7 @@ This guide is for harris lab focks who want to understand exactly how the packag
 4. **Inspect and correct** epochs interactively in the Scope viewer.
 5. **Save** the session to JSON and/or export a hypnogram CSV.
 
-All parameters (epoch length, analysis profile, EEG channel, filter cutoffs, thresholds) are configurable at runtime — nothing is hard-coded.
+All parameters (epoch length, EEG channel, filter cutoffs, thresholds) are configurable at runtime — nothing is hard-coded.
 
 ---
 

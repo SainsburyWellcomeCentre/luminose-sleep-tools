@@ -82,7 +82,7 @@ session = ScoringSession.from_h5("output/LUMI-0013_scope.h5", recording)
 | `emg_rms` | 5.0 – 45.0 (EMG FIR bandpass) | V | High in Wake; flat (atonia) in REM; low in NREM |
 | `td_ratio` | derived: theta / delta | dimensionless | Peak in REM; low in NREM; moderate in Wake |
 
-In `standard` mode, band powers use Hann-windowed STFT (`scipy.signal.spectrogram`, `scaling="density"`), integrated via `np.trapezoid` over the exact band edges in `BANDS`. In `spike2` mode, the default band-power method is the OSD4-style chunked Hann FFT approximation documented above.
+All scoring features use a single Spike2-compatible pipeline. The spectrogram method (visualization only) uses `scipy.signal.spectrogram` with a longer Hann window for better frequency resolution.
 
 ## SleepRecording Metadata Methods
 

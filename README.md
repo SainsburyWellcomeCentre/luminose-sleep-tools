@@ -151,7 +151,6 @@ The window features:
 - **Theme** — `☯` button toggles dark / light. Spinbox and combobox arrows adapt to the theme (white on dark, black on light).
 - **? Help** — Leftmost transport button; step-by-step scoring guide with platform-aware shortcuts (Cmd on macOS).
 - **EEG Channel** — `∿` button in the transport bar (right of `⊕`) opens a popup menu to select which EEG signal drives band-power and classification: **Average (EEG1+EEG2)** (default), **EEG1 only**, or **EEG2 only**. Button label updates live. Click **Analyze Signals** after changing to recompute features.
-- **Analysis Profile** — `Std` / `Spike2` button beside the EEG selector chooses the feature pipeline. Spike2 mode disables hidden EEG averaging and auto-selects EEG2 when available.
 
 ## Video Export
 
@@ -263,7 +262,7 @@ for name, info in FEATURE_INFO.items():
 | `emg_rms` | 5.0 – 45.0 (EMG bandpass) | V | High in Wake; flat (atonia) in REM; low in NREM |
 | `td_ratio` | theta / delta (derived) | dimensionless | Peak in REM; low in NREM; moderate in Wake |
 
-In `standard` mode, band powers use Hann-windowed STFT (`scipy.signal.spectrogram`, `scaling="density"`) integrated over each band with `np.trapezoid`. EMG RMS uses an FIR bandpass (5–45 Hz, transition 1.8 Hz) followed by a causal exponential smoother (τ = 5 s). In `spike2` mode, EEG drift filtering is causal, EMG RMS uses an OSD4-like centred window, and band powers use an OSD4 `Pw(...)`-style approximation on a 0.1 s grid by default.
+Scoring features use a single Spike2-compatible pipeline: causal EEG drift filtering, centred ±5 s RMS for EMG, and OSD4-style chunked Hann FFT band powers on a 0.1 s grid. The spectrogram method uses STFT with a longer Hann window for better frequency resolution during visual inspection.
 
 ## Example Scripts
 
