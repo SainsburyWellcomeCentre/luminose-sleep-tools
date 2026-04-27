@@ -4,7 +4,6 @@ channels:
   - defaults
 dependencies:
   - python>=3.11
-  - mamba
   # Core scientific stack
   - numpy>=1.24
   - scipy>=1.10
