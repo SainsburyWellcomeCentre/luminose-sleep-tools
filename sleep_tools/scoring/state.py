@@ -31,7 +31,7 @@ _VALID_STATES: frozenset[str] = frozenset({"W", "N", "R", "U"})
 #   emg_rms:     V  → µV       (scale = 1e6)
 #   td_ratio:    dimensionless
 # ---------------------------------------------------------------------------
-_DELTA_BW: float = 4.0 - 0.5          # BANDS["delta"] = (0.5, 4.0) Hz
+_DELTA_BW: float = 4.0           # BANDS["delta"] = (0.0, 4.0) Hz
 _SCALE_DELTA: float = 1e12 / _DELTA_BW
 _SCALE_EMG: float = 1e6
 # td_ratio is already dimensionless — no conversion needed
@@ -198,7 +198,7 @@ class ScoringSession:
         emg_base   = np.asarray(features["emg_rms"],    dtype=np.float64)
         td_vals    = np.asarray(features["td_ratio"],   dtype=np.float64)
 
-        # Convert base units → display units (matching Scope spinbox units)
+        # Convert base units → display units (matching Scope spinbox units).
         delta_disp = delta_base * _SCALE_DELTA
         emg_disp   = emg_base   * _SCALE_EMG
 

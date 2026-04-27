@@ -41,7 +41,7 @@ All parameters (epoch length, analysis profile, EEG channel, filter cutoffs, thr
 
 | Key | Shape | Units | Description |
 |-----|-------|-------|-------------|
-| `times` | `(n_epochs,)` | s | Centre time of each STFT window |
+| `times` | `(n_epochs,)` | s | Centre time of each feature window (0.1 s grid) |
 | `eeg_filtered` | `(n_samples,)` | V | High-passed EEG (full sample-rate) |
 | `emg_filtered` | `(n_samples,)` | V | FIR band-passed EMG (full sample-rate) |
 | `delta_power` | `(n_epochs,)` | V²/Hz·Hz | Delta band power per epoch |
@@ -54,12 +54,10 @@ All parameters (epoch length, analysis profile, EEG channel, filter cutoffs, thr
 
 All values are in SI base units (V, V²/Hz·Hz). The Scope viewer converts to display units (µV, µV²/Hz) for the spinboxes and hypnogram; the auto-scorer does the same conversion internally so threshold values entered in the GUI match what you see on screen.
 
-`SleepAnalyzer` has two analysis profiles:
+The pipeline closely follows the Spike2 scoring protocol used in the lab (OSD4 script). Two separate methods are used depending on the purpose:
 
-- `profile="standard"` keeps the original sleep-tools behavior: zero-phase EEG drift filtering, hidden EEG1+EEG2 averaging when `eeg_channel=None`, and Hann-windowed STFT band powers.
-- `profile="spike2"` requires an explicit EEG channel such as `"EEG2"`, uses causal EEG drift filtering, OSD4-like centred EMG RMS, sets delta to `0.0-4.0 Hz`, and computes an OSD4 `Pw(...)`-style band-power approximation on a 0.1 s output grid by default.
-
-From `OSD4.s2s`, EEG is interpolated to about 512 Hz before band power; the OSD4 defaults are delta `0-4 Hz`, theta `6-10 Hz`, 256-point Hann FFT, 0.1 s output grid, and 5 s smoothing. Spike2's exact `Pw(...)` implementation is not public, so the Spike2 profile should still be treated as a compatibility approximation.
+- **Scoring features** (`compute_all_features`): causal EEG filter, centred EMG RMS, Hann-windowed FFT band powers on a fine time grid. Optimised for epoch-level classification.
+- **Spectrogram / visualisation** (`spectrogram`, `band_power`): STFT with a long Hann window. Provides higher frequency resolution for visual inspection.
 
 ---
 
@@ -70,20 +68,17 @@ From `OSD4.s2s`, EEG is interpolated to about 512 Hz before band power; the OSD4
 **Implementation** (`filter_eeg`, `analysis.py`):
 
 ```
-1. Design a 2nd-order Butterworth low-pass filter at 0.5 Hz:
-   sos = scipy.signal.butter(2, 0.5, btype='low', fs=sfreq, output='sos')
+1. Design a causal 2nd-order Butterworth low-pass filter at 0.5 Hz:
+   b, a = scipy.signal.butter(2, 0.5, btype='low', fs=sfreq)
 
-2. Apply zero-phase (forward + reverse) filtering to get the drift estimate:
-   drift = scipy.signal.sosfiltfilt(sos, raw_eeg)
+2. Apply it forward-only to estimate the DC drift:
+   drift = scipy.signal.lfilter(b, a, raw_eeg)
 
 3. Subtract drift from original:
    eeg_filtered = raw_eeg − drift
 ```
 
-This is equivalent to a high-pass at ~0.5 Hz but implemented as a subtraction. In `standard` mode, the zero-phase `sosfiltfilt` call means there is no phase distortion in the retained frequencies. In `spike2` mode, sleep-tools uses causal `scipy.signal.lfilter`, which matches the observed Spike2 drift channel behavior more closely.
-
-**Why a Butterworth LP subtraction rather than a direct HP?**
-Spike2's scripting environment computes the drift channel explicitly and plots it alongside the filtered trace. Subtracting in Python keeps the same conceptual pipeline; the selected profile controls whether the drift filter is zero-phase or causal.
+The causal (forward-only) filter matches the Spike2 protocol, which builds a virtual `EEGlow` channel with a real-time IIR filter and subtracts it from the original. Using subtraction rather than a direct high-pass keeps the pipeline conceptually aligned with the Spike2 workflow.
 
 ---
 
@@ -113,32 +108,23 @@ Spike2's scripting environment computes the drift channel explicitly and plots i
 
 ### EMG RMS Envelope
 
-**Goal**: convert the rectified, band-passed EMG into a slowly-varying power envelope that can be compared epoch-by-epoch. Time constant τ = 5 s smooths over the epoch duration without introducing look-ahead bias.
+**Goal**: convert the band-passed EMG into a slowly-varying power envelope for epoch-by-epoch comparison.
 
-**Implementation** (`emg_rms`, `analysis.py:186`):
+**Implementation** (`emg_rms`, `analysis.py`):
 
 ```
 1. Square the band-passed signal:
    squared = emg_filtered²
 
-2. Compute alpha for a causal single-pole IIR (exponential moving average):
-   alpha = 1 − exp(−1 / (sfreq × τ))
+2. Apply a centred uniform sliding window of width 2τ (τ = 5 s default):
+   mean_sq[n] = mean(squared[n − τ·sfreq : n + τ·sfreq])
+   Implemented as: scipy.ndimage.uniform_filter1d(squared, size=2·τ·sfreq)
 
-   At sfreq=400 Hz, τ=5 s:
-   alpha = 1 − exp(−1/2000) ≈ 4.999×10⁻⁴
-
-3. Apply causal IIR filter (no look-ahead):
-   ema[n] = alpha × squared[n] + (1 − alpha) × ema[n−1]
-   Implemented as: scipy.signal.lfilter([alpha], [1.0, −(1−alpha)], squared)
-
-4. Take square root (clip to 0 to guard against floating-point negatives):
-   emg_rms_signal = sqrt(max(ema, 0))
+3. Take square root:
+   emg_rms_signal = sqrt(mean_sq)
 ```
 
-The result is the instantaneous RMS power envelope. It is computed at the full sample rate, then resampled to epoch centre times via linear interpolation (`np.interp`) before being stored in the features dict.
-
-**Why causal (not zero-phase)?**
-This matches Spike2's `Smooth()` function, which is a causal integrator. A causal filter means the RMS at time `t` depends only on samples ≤ `t`, which is appropriate for real-time scoring workflows. The 5 s time constant is long enough that the asymmetry has negligible practical effect for epoch-level comparisons.
+The total window width is 10 s (±5 s), matching the Spike2 OSD4 protocol which describes this as a "5 s (=±5 s)" RMS smoother. The result is computed at the full sample rate, then resampled to epoch centre times via linear interpolation (`np.interp`) before being stored in the features dict.
 
 ---
 
@@ -150,47 +136,34 @@ This matches Spike2's `Smooth()` function, which is a causal integrator. A causa
 
 | Band | Range (Hz) | Sleep relevance |
 |------|-----------|-----------------|
-| Delta | 0.5 – 4.0 | Primary NREM marker; very high in slow-wave sleep |
+| Delta | 0 – 4.0 | Primary NREM marker; very high in slow-wave sleep |
 | Theta | 6.0 – 10.0 | Elevated in REM; numerator of T:D ratio |
 | Alpha | 8.0 – 13.0 | Overlaps theta in rodents; available for custom staging |
 | Beta | 13.0 – 30.0 | Elevated during Wake and arousal |
 | Gamma | 30.0 – 100.0 | High-frequency arousal; elevated during active wake |
 
+Delta starts at 0 Hz to include all slow-wave power below 4 Hz, matching the scoring protocol. Any residual DC is suppressed by the upstream EEG high-pass filter.
+
 Note: alpha and theta overlap in the 8–10 Hz range. This is intentional — rodent theta peaks around 7–9 Hz, which falls in both bands. Both are kept for flexibility.
 
-**Implementation** (`band_power`, `analysis.py:218`):
+**Scoring feature implementation** (`_band_power_smoothed`, `analysis.py`):
 
 ```
-1. Convert window length to samples:
-   nperseg = int(epoch_len × sfreq)    # default: 5 s × 400 Hz = 2000 samples
+1. Resample EEG to 512 Hz (matches the Spike2 OSD4 script default).
 
-2. Compute overlap in samples:
-   noverlap = int(nperseg × overlap)   # default: 50% → 1000 samples
+2. Slide a 256-point Hann window every 0.1 s:
+   freq resolution = 512 / 256 = 2 Hz per bin
+   time resolution = 0.1 s output grid
 
-3. Compute STFT power spectral density (Hann window, density scaling):
-   freqs, times, Sxx = scipy.signal.spectrogram(
-       eeg_filtered,
-       fs=sfreq,
-       nperseg=nperseg,
-       noverlap=noverlap,
-       window='hann',
-       scaling='density',        # units: V²/Hz
-   )
-   # Sxx shape: (n_freqs, n_time_windows)
+3. For each window, compute one-sided FFT power and sum bins in band (f_lo, f_hi).
 
-4. For each band (f_lo, f_hi):
-   mask = (freqs >= f_lo) & (freqs <= f_hi)
-   power = np.trapezoid(Sxx[mask, :], freqs[mask], axis=0)
-   # Integrates V²/Hz over Hz → V²/Hz·Hz ≡ V² (total band energy)
+4. Apply zero-phase exponential smoothing (τ = 5 s) to the resulting time series.
 ```
 
-**Frequency resolution**: at a 5 s window and 400 Hz sample rate, the STFT has `nperseg/2 + 1 = 1001` frequency bins with resolution `sfreq / nperseg = 0.2 Hz/bin`. This resolves the 0.5–4.0 Hz delta band into 18 bins.
+**Why this method for scoring?**
+The 2 Hz frequency resolution is coarser than an STFT on the raw signal, but the fine 0.1 s time grid and 5 s smoothing give a stable, epoch-aligned feature that closely follows the Spike2 OSD4 protocol (`Pw(...)` function with default settings).
 
-**Hann window**: reduces spectral leakage (side-lobe suppression ~32 dB). The Hann window is the standard choice for sleep EEG spectral analysis.
-
-**`scaling='density'`**: output is power spectral *density* (V²/Hz), so integrating over a frequency band gives band power in V²/Hz·Hz. This makes the result independent of the window length, unlike `scaling='spectrum'`.
-
-**`np.trapezoid`**: trapezoidal integration over the exact frequency axis returned by scipy. This correctly handles the 0.2 Hz bin spacing and the partial bins at band edges.
+**Spectrogram / visualisation** uses `spectrogram()` (STFT, Hann window, `scaling='density'`), which gives 0.2 Hz frequency resolution at 5 s windows — better suited for visual inspection of spectral structure.
 
 ---
 
@@ -249,7 +222,7 @@ For each scoring epoch i (centre time t_centre):
      k = argmin |feat_times − t_centre|
 
   2. Convert base units to display units:
-     delta_µV² = delta_power[k] × (1e12 / 3.5)   # 3.5 Hz = delta bandwidth (4.0−0.5)
+     delta_µV² = delta_power[k] × (1e12 / 4.0)   # 4.0 Hz = delta bandwidth (0–4 Hz)
      emg_µV    = emg_rms[k]    × 1e6
 
   3. Apply rules in order (later rules overwrite earlier ones):

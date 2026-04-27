@@ -88,13 +88,9 @@ See **[how_to_score.md](how_to_score.md)** for a complete guide covering signal 
 from sleep_tools import SleepRecording, SleepAnalyzer, Scope, ScoringSession
 
 rec = SleepRecording.from_edf("path/to/recording_export.edf")
-# eeg_channel=None (default) averages EEG1+EEG2; pass "EEG1" or "EEG2" to use one channel
-ana = SleepAnalyzer(rec, epoch_len=5.0, eeg_channel=None)
+# Specify which EEG channel to use; None auto-selects (EEG1 preferred)
+ana = SleepAnalyzer(rec, epoch_len=5.0, eeg_channel="EEG1")
 features = ana.compute_all_features()
-
-# Spike2-compatible analysis uses an explicit EEG channel and causal filtering.
-spike2_ana = SleepAnalyzer(rec, epoch_len=5.0, eeg_channel="EEG2", profile="spike2")
-spike2_features = spike2_ana.compute_all_features()
 
 # Auto-score with default thresholds
 session = ScoringSession(rec, epoch_len=5.0)
@@ -228,7 +224,7 @@ the package:
 
 | Location | Attributes written |
 |----------|--------------------|
-| `/` (root) | `animal_id`, `experiment_id`, `start_datetime`, `sfreq`, `duration_s`, `n_samples`, `channels`, `epoch_len`, `n_epochs`, `features_computed`, `analysis_profile`, `eeg_channel`, `feature_source`, `sleep_tools_version`, `band_definitions` (JSON), `saved_at` |
+| `/` (root) | `animal_id`, `experiment_id`, `start_datetime`, `sfreq`, `duration_s`, `n_samples`, `channels`, `epoch_len`, `n_epochs`, `features_computed`, `eeg_channel`, `feature_source`, `sleep_tools_version`, `band_definitions` (JSON), `saved_at` |
 | `/signals/{ch}` | `unit="V"`, `sfreq` |
 | `/epochs/times` | `units="s"`, `description` |
 | `/epochs/labels` | `description` (label key: U/W/N/R) |
@@ -259,7 +255,7 @@ for name, info in FEATURE_INFO.items():
 
 | Feature | Frequency range (Hz) | Units | Sleep relevance |
 |---------|----------------------|-------|-----------------|
-| `delta_power` | 0.5 – 4.0 | V²/Hz·Hz | Very high in NREM; primary NREM marker |
+| `delta_power` | 0 – 4.0 | V²/Hz·Hz | Very high in NREM; primary NREM marker |
 | `theta_power` | 6.0 – 10.0 | V²/Hz·Hz | Elevated in REM; numerator of T:D ratio |
 | `alpha_power` | 8.0 – 13.0 | V²/Hz·Hz | Overlaps theta in rodents |
 | `beta_power` | 13.0 – 30.0 | V²/Hz·Hz | Elevated during Wake/arousal |
@@ -310,21 +306,16 @@ Tests use the real EDF/TSV files in `example_data/luminose/`.
 
 ## Signal Processing
 
-Mirrors Julia's Spike2 protocol:
+Follows the lab's Spike2 scoring protocol:
 
 | Signal | Processing |
 |--------|-----------|
-| EEG | IIR 2nd-order Butterworth LP at 0.5 Hz → subtract drift (≈ HP at 0.5 Hz) |
-| EMG | FIR bandpass 5–45 Hz (transition 1.8 Hz) → exponential RMS envelope (τ = 5 s) |
-| Band power | STFT with Hann window (default 5 s, 50 % overlap) |
+| EEG | Causal 2nd-order Butterworth LP at 0.5 Hz → subtract drift (≈ HP at 0.5 Hz) |
+| EMG | FIR bandpass 5–45 Hz (transition 1.8 Hz) → centred ±5 s RMS envelope |
+| Band powers | 256-pt Hann FFT on 0.1 s grid (EEG resampled to 512 Hz), 5 s smoothing |
+| Spectrogram | STFT with Hann window (5 s, 50 % overlap) — higher freq resolution for display |
 
-For closest Spike2 compatibility:
-
-```python
-ana = SleepAnalyzer(rec, epoch_len=5.0, eeg_channel="EEG2", profile="spike2")
-```
-
-Spike2's exact `Pw(...)` band-power implementation is not public; the package exposes a compatible approximation based on the OSD4 script defaults and keeps the standard STFT pipeline as the backward-compatible default.
+The band-power method for scoring features approximates the Spike2 OSD4 `Pw(...)` function. The spectrogram uses a longer STFT window for better frequency resolution when viewing data.
 
 ## Package Structure
 

@@ -15,19 +15,19 @@ For signal processing details and scoring workflow see [how_to_score.md](how_to_
 
 ## Coding Rules
 
-- All parameters (epoch length, analysis profile, EEG channel, filter cutoffs, thresholds) must be runtime-configurable — never hard-coded
+- All parameters (epoch length, EEG channel, filter cutoffs, thresholds) must be runtime-configurable — never hard-coded
 - Type hints on all public functions and class methods
 - Tests go in `tests/`; use the example EDF/TSV data for integration tests
 - Install with `pip install -e .` via `pyproject.toml`
 
-## Analysis Profiles
+## Signal Processing Pipeline
 
-`SleepAnalyzer(recording, epoch_len=5.0, eeg_channel=None, profile="standard")` supports:
+`SleepAnalyzer(recording, epoch_len=5.0, eeg_channel=None)` — single pipeline following the lab's Spike2 scoring protocol:
 
-- `standard` — backward-compatible default: average EEG1+EEG2 when `eeg_channel=None`, zero-phase EEG drift filtering, Hann-windowed STFT band powers.
-- `spike2` — Spike2-compatible mode: requires an explicit EEG channel such as `"EEG2"`, uses causal 2nd-order Butterworth EEG drift filtering, OSD4-like centred EMG RMS, and an OSD4 `Pw(...)`-style band-power approximation on a 0.1 s output grid by default.
-
-From `OSD4.s2s`: EEG is interpolated to about 512 Hz before band power; OSD4 defaults are delta `0-4 Hz`, theta `6-10 Hz`, 256-point Hann FFT, 0.1 s output grid, and 5 s smoothing. Spike2's exact `Pw(...)` implementation is not public, so `band_power_spike2_like()` is still an approximation.
+- **EEG**: causal 2nd-order Butterworth low-pass at 0.5 Hz → subtract drift (≈ high-pass).
+- **EMG**: FIR bandpass 5–45 Hz (transition 1.8 Hz) → centred ±5 s uniform-window RMS.
+- **Band powers** (scoring): 256-pt Hann FFT every 0.1 s on EEG resampled to 512 Hz, then 5 s exponential smoothing. Approximates the Spike2 OSD4 `Pw(...)` function. Delta 0–4 Hz, theta 6–10 Hz.
+- **Spectrogram** (visualisation): STFT via `scipy.signal.spectrogram`, Hann window, `scaling='density'`. Better frequency resolution than the scoring method.
 
 ## HDF5 Export
 
@@ -113,7 +113,7 @@ Opens a PySide6 Qt window.  Backend must be `QtAgg` (set at module level in `sco
 - **Reset Defaults button**: in the CLASSIFICATION panel; restores all six threshold spinboxes and epoch length to `AutoScoreThresholds()` factory values via `_on_reset_thr_defaults()`
 - **? help button**: leftmost transport button; shows step-by-step scoring instructions (keyboard shortcuts are platform-aware: Cmd on macOS, Ctrl elsewhere)
 - **EEG channel selector**: `∿` button in the transport bar (right of `↕`); opens a popup menu with **Average (EEG1+EEG2)** (default), **EEG1 only**, **EEG2 only**; button label updates to show current selection (e.g. `∿ EEG1`); click **Analyze Signals** after changing to recompute features with the chosen channel; unavailable options are greyed out when a channel is missing
-- **Analysis profile selector**: `Std` / `Spike2` button in the transport bar (right of EEG selector); Spike2 mode disables hidden EEG averaging and auto-selects EEG2 when available; click **Analyze Signals** after changing profile/channel.
+- **EEG channel selector**: `∿` button in the transport bar opens a menu to choose **EEG1** or **EEG2**; click **Analyze Signals** after changing to recompute features with the selected channel.
 
 ### `make_video(output_path=None, *, signals, t_start, t_end, x_window, y_lims, fps, speed, figsize, dpi, session=None, session_h5=None, show_hypnogram=True)`
 Renders a scrolling MP4 video using `matplotlib.animation.FFMpegWriter`.
@@ -143,6 +143,7 @@ Renders a scrolling MP4 video using `matplotlib.animation.FFMpegWriter`.
 - Returns `{}` if no TSV is loaded or no TTL rows are found.
 - `save_to_h5` automatically writes `/ttl_events/{TTL_N}/rise_times` and `fall_times` when TTL data is present.
 - **TSV is fully optional** — if no `*_annotations.tsv` file exists alongside the EDF, the recording loads normally, `ttl_events()` returns `{}`, the TTL panel is hidden in Scope, and HDF5 export simply omits the `/ttl_events/` group. No errors are raised.
+- **TSV auto-discovery** tries the Luminose `<stem>_export.edf` → `<stem>_annotations.tsv` pattern first, then a generic `<stem>_annotations.tsv` fallback alongside any `.edf` filename.
 
 `SyncAligner(recording)` — exported from `sleep_tools` — provides Stage 3 helpers: `extract_ttl_events()`, `deduplicate_channels()`, `detect_pulses()`, `align_to_bpod()`, and `plot_events()`.
 
@@ -161,7 +162,7 @@ Overlays are redrawn on every scroll/play tick and removed cleanly on each redra
 
 **Stage 2 complete** — `scoring/state.py` (`ScoringSession`, `AutoScoreThresholds`, `STATE_COLORS`), auto-scoring (Wake→NREM→REM thresholds), hypnogram strip in Scope, keyboard hotkeys (W/N/R/U, Ctrl/Cmd+Z/Y, Space, `[`/`]`, arrows, Ctrl/Cmd+O/E), CLASSIFICATION + LABELING sidebar panels, draggable threshold lines, `?` help dialog, save JSON / export CSV / save HDF5, reload scored session from JSON or HDF5 (`ScoringSession.from_h5`).
 
-**Stage 3 complete** — TTL event parsing (`recording.ttl_events()` and `SyncAligner`), HDF5 export of TTL times, TTL overlay panel in Scope (strips, rising/falling edge markers), Bpod offset alignment stub, EEG channel selector, and analysis profile selector.
+**Stage 3 complete** — TTL event parsing (`recording.ttl_events()` and `SyncAligner`), HDF5 export of TTL times, TTL overlay panel in Scope (strips, rising/falling edge markers), Bpod offset alignment stub, and EEG channel selector.
 
 See `agent.md` → Stage Breakdown for what is complete and what is next.
 

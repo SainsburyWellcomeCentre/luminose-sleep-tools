@@ -387,8 +387,6 @@ class SleepVisualizer:
             bp_low=bp_low,
             bp_high=bp_high,
             emg_time_constant=emg_time_constant,
-            epoch_window=window,
-            overlap=overlap,
         )
 
         eeg = feats["eeg_filtered"]

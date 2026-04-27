@@ -322,10 +322,7 @@ class Scope:
                 self_w._y_offsets: dict[str, float] = {}  # per-channel DC offset for centering
                 self_w._lockable_widgets: list = []  # disabled during playback
 
-                # ── Analysis profile / EEG channel selection ──────────
-                self_w._analysis_profile: str = (
-                    getattr(ana, "profile", "standard") if ana else "standard"
-                )
+                # ── EEG channel selection ──────────────────────────────
                 self_w._eeg_channel_sel: str | None = (
                     getattr(ana, "eeg_channel", None) if ana else None
                 )
@@ -604,17 +601,6 @@ class Scope:
                 self_w._eeg_btn.clicked.connect(self_w._show_eeg_menu)
                 self_w._update_eeg_btn_text()
                 tl.addWidget(self_w._eeg_btn)
-
-                # Analysis profile selector button
-                self_w._profile_btn = QToolButton()
-                self_w._profile_btn.setFixedSize(58, 32)
-                self_w._profile_btn.setToolTip(
-                    "Analysis profile for filtering and feature computation\n"
-                    "Re-run 'Analyze Signals' after changing"
-                )
-                self_w._profile_btn.clicked.connect(self_w._show_profile_menu)
-                self_w._update_profile_btn_text()
-                tl.addWidget(self_w._profile_btn)
 
                 # Theme Toggle
                 self_w._theme_btn = QToolButton()
@@ -1430,7 +1416,7 @@ class Scope:
                 p = QFileDialog.getExistingDirectory(self_w, "Open Folder")
                 if not p: return
                 self_w._folder_path = Path(p)
-                self_w._files_in_folder = sorted(list(self_w._folder_path.glob("*_export.edf")))
+                self_w._files_in_folder = sorted(list(self_w._folder_path.glob("*.edf")))
                 self_w._populate_sidebar()
 
             def _on_file_selected(self_w, item):
@@ -1440,52 +1426,8 @@ class Scope:
 
             def _update_eeg_btn_text(self_w):
                 """Update the transport-bar EEG button label to reflect current selection."""
-                labels = {None: "∿ Avg", "EEG1": "∿ EEG1", "EEG2": "∿ EEG2"}
-                self_w._eeg_btn.setText(labels.get(self_w._eeg_channel_sel, "∿ Avg"))
-
-            def _update_profile_btn_text(self_w):
-                """Update the transport-bar profile button label."""
-                label = "Spike2" if self_w._analysis_profile == "spike2" else "Std"
-                self_w._profile_btn.setText(label)
-
-            def _ensure_valid_profile_channel(self_w):
-                """Keep Spike2 mode from silently averaging EEG channels."""
-                if self_w._analysis_profile != "spike2":
-                    return
-                if self_w._eeg_channel_sel is not None:
-                    return
-                rec = self_w._recording
-                ch_names = rec.raw.ch_names if rec else []
-                if "EEG2" in ch_names:
-                    self_w._eeg_channel_sel = "EEG2"
-                elif "EEG1" in ch_names:
-                    self_w._eeg_channel_sel = "EEG1"
-                self_w._update_eeg_btn_text()
-
-            def _show_profile_menu(self_w):
-                """Open popup menu for analysis profile selection."""
-                menu = QMenu(self_w)
-                grp = QActionGroup(menu)
-                grp.setExclusive(True)
-
-                def _make_action(label: str, value: str):
-                    act = QAction(label, menu)
-                    act.setCheckable(True)
-                    act.setChecked(self_w._analysis_profile == value)
-                    act.setData(value)
-                    grp.addAction(act)
-                    menu.addAction(act)
-                    return act
-
-                _make_action("Standard", "standard")
-                _make_action("Spike2-compatible", "spike2")
-                chosen = menu.exec(self_w._profile_btn.mapToGlobal(
-                    self_w._profile_btn.rect().bottomLeft()
-                ))
-                if chosen is not None:
-                    self_w._analysis_profile = chosen.data()
-                    self_w._ensure_valid_profile_channel()
-                    self_w._update_profile_btn_text()
+                labels = {"EEG1": "∿ EEG1", "EEG2": "∿ EEG2"}
+                self_w._eeg_btn.setText(labels.get(self_w._eeg_channel_sel, "∿"))
 
             def _show_eeg_menu(self_w):
                 """Open popup menu for EEG channel selection."""
@@ -1498,7 +1440,7 @@ class Scope:
                 grp = QActionGroup(menu)
                 grp.setExclusive(True)
 
-                def _make_action(label: str, value):
+                def _make_action(label: str, value: str):
                     act = QAction(label, menu)
                     act.setCheckable(True)
                     act.setChecked(self_w._eeg_channel_sel == value)
@@ -1507,24 +1449,18 @@ class Scope:
                     menu.addAction(act)
                     return act
 
-                avg_act = _make_action("∿  Average (EEG1+EEG2)", None)
-                avg_act.setEnabled(
-                    has_eeg1 and has_eeg2 and self_w._analysis_profile != "spike2"
-                )
-                _make_action("∿  EEG1 only", "EEG1").setEnabled(has_eeg1)
-                _make_action("∿  EEG2 only", "EEG2").setEnabled(has_eeg2)
+                _make_action("∿  EEG1", "EEG1").setEnabled(has_eeg1)
+                _make_action("∿  EEG2", "EEG2").setEnabled(has_eeg2)
 
                 chosen = menu.exec(self_w._eeg_btn.mapToGlobal(
                     self_w._eeg_btn.rect().bottomLeft()
                 ))
                 if chosen is not None:
                     self_w._eeg_channel_sel = chosen.data()
-                    self_w._ensure_valid_profile_channel()
                     self_w._update_eeg_btn_text()
 
             def _on_analyze(self_w):
                 if self_w._recording:
-                    self_w._ensure_valid_profile_channel()
                     epoch_len = (
                         self_w._epoch_len_spin.value()
                         if self_w._epoch_len_spin is not None
@@ -1534,7 +1470,6 @@ class Scope:
                         self_w._recording,
                         eeg_channel=self_w._eeg_channel_sel,
                         epoch_len=epoch_len,
-                        profile=self_w._analysis_profile,
                     )
                     self_w._init_data(self_w._recording, self_w._analyzer, self_w._requested_signals)
                     self_w._populate_sidebar()
@@ -1542,7 +1477,7 @@ class Scope:
 
             def _load(self_w, p: Path):
                 if p.is_dir():
-                    edfs = list(p.glob("*_export.edf"))
+                    edfs = sorted(p.glob("*.edf"))
                     if not edfs: return
                     p = edfs[0]
 
@@ -1691,14 +1626,7 @@ class Scope:
                 if not self_w._recording or not self_w._analyzer:
                     return
 
-                self_w._ensure_valid_profile_channel()
-                if (
-                    getattr(self_w._analyzer, "profile", "standard")
-                    != self_w._analysis_profile
-                    or getattr(self_w._analyzer, "eeg_channel", None)
-                    != self_w._eeg_channel_sel
-                ):
-                    self_w._analyzer.profile = self_w._analysis_profile
+                if getattr(self_w._analyzer, "eeg_channel", None) != self_w._eeg_channel_sel:
                     self_w._analyzer.eeg_channel = self_w._eeg_channel_sel
                     self_w._analyzer.invalidate_cache()
 
@@ -1777,7 +1705,7 @@ class Scope:
                     return
                 thr = self_w._session.thresholds
 
-                _delta_bw = 3.5  # BANDS["delta"] = (0.5, 4.0)
+                _delta_bw = 4.0              # BANDS["delta"] = (0.0, 4.0) Hz
                 _delta_to_base = _delta_bw / 1e12   # µV²/Hz → V²
                 _emg_to_base = 1.0 / 1e6            # µV → V
 
@@ -2127,10 +2055,9 @@ class Scope:
                      f"<b>{_mod}+E</b> — open file  |  <b>{_mod}+O</b> — open folder<br>"
                      "Or use <b>Open File…</b> / <b>Open Folder…</b> in the RECORDING sidebar panel."),
                     ("2  Choose EEG channel &amp; analyze",
-                     "<b>∿</b> button (transport bar, right of ⊕) — select which EEG signal drives "
+                     "<b>∿</b> button (transport bar, right of ⊕) — select which EEG channel drives "
                      "band-power computation and classification:<br>"
-                     "• <b>∿ Avg</b> — average of EEG1 and EEG2 (default)<br>"
-                     "• <b>∿ EEG1</b> / <b>∿ EEG2</b> — use one channel only<br>"
+                     "• <b>∿ EEG1</b> or <b>∿ EEG2</b> — choose the best channel for this recording<br>"
                      "Set <b>Epoch length</b> (below the button, default 5.0 s) then click "
                      "<b>Analyze Signals</b> in the RECORDING panel to compute EEG power bands, "
                      "EMG RMS, and the T:D ratio. Re-run Analyze after changing the channel or epoch length."),
@@ -2659,7 +2586,7 @@ class Scope:
 
         derived: dict | None = None
         if analyzer is not None and any(n in _DERIVED_KEYS for n in names):
-            derived = analyzer.compute_all_features(overlap=0.9)
+            derived = analyzer.compute_all_features()
 
         result: list[_SignalData] = []
         theme_colors = theme.signals

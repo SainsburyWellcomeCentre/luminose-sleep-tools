@@ -500,6 +500,8 @@ After implementation, update:
 
 Status: `CLAUDE.md`, `how_to_score.md`, `README.md`, and `agent.md` updated for analysis profiles, H5 feature alignment, and Stage 3 sync alignment. Dedicated Spike2 MAT validation utility remains pending.
 
+**Post-session fix (2026-04-27):** Scope `_on_open_folder` and `_load` now glob `*.edf` instead of `*_export.edf`, so any EDF file (including the comparison `large_file_*.edf`) appears in the folder list and loads correctly. TSV auto-discovery in `io.py` gained a generic stem-based fallback so non-Luminose EDFs can also pick up paired TSVs if present. The comparison EDF (no paired TSV) loads cleanly with `ttl_events()` returning `{}`.
+
 ### Recommended Completion Order
 
 1. H5 feature/epoch alignment.

@@ -161,10 +161,16 @@ class SleepRecording:
         if rename:
             raw.rename_channels(rename)
 
-        # Auto-discover TSV
+        # Auto-discover TSV: try Luminose naming first, then stem-based fallback
         if tsv_path is None:
             candidate = edf_path.parent / edf_path.name.replace("_export.edf", "_annotations.tsv")
-            tsv_path = candidate if (candidate.suffix == ".tsv" and candidate.exists()) else None
+            if candidate.suffix == ".tsv" and candidate.exists():
+                tsv_path = candidate
+            else:
+                # Generic fallback: <stem>_annotations.tsv alongside any .edf
+                fallback = edf_path.with_name(edf_path.stem + "_annotations.tsv")
+                if fallback.exists():
+                    tsv_path = fallback
 
         annotations: pd.DataFrame | None = None
         animal_id = ""
@@ -579,15 +585,10 @@ def save_to_h5(
         if feature_config is not None and isinstance(feature_config.get("bands"), dict)
         else {k: list(v) for k, v in BANDS.items()}
     )
-    analysis_profile = (
-        feature_config.get("profile")
-        if feature_config is not None
-        else getattr(analyzer, "profile", "none") if analyzer is not None else "none"
-    )
     eeg_channel = (
         feature_config.get("eeg_channel")
         if feature_config is not None
-        else getattr(analyzer, "eeg_channel", None) if analyzer is not None else "none"
+        else getattr(analyzer, "eeg_channel", None) if analyzer is not None else None
     )
 
     with h5py.File(path, "w") as f:
@@ -603,8 +604,7 @@ def save_to_h5(
         f.attrs["epoch_len"] = used_epoch_len
         f.attrs["n_epochs"] = n_epochs
         f.attrs["features_computed"] = analyzer is not None
-        f.attrs["analysis_profile"] = analysis_profile
-        f.attrs["eeg_channel"] = "average" if eeg_channel is None else str(eeg_channel)
+        f.attrs["eeg_channel"] = "auto" if eeg_channel is None else str(eeg_channel)
         f.attrs["feature_timebase"] = "epochs"
         f.attrs["feature_source"] = feature_source
         f.attrs["sleep_tools_version"] = _pkg_version
@@ -680,9 +680,8 @@ def save_to_h5(
             and not _times_match(np.asarray(times, dtype=np.float64), analysis_times)
         ):
             analysis_grp = f.create_group("analysis")
-            analysis_grp.attrs["analysis_profile"] = analysis_profile
             analysis_grp.attrs["eeg_channel"] = (
-                "average" if eeg_channel is None else str(eeg_channel)
+                "auto" if eeg_channel is None else str(eeg_channel)
             )
             analysis_grp.attrs["feature_timebase"] = "native_analysis"
             analysis_grp.attrs["band_definitions"] = json.dumps(band_definitions)
