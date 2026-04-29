@@ -278,7 +278,7 @@ Tasks:
 10b. Load session from HDF5 (`ScoringSession.from_h5`): reads labels + thresholds from `/epochs/labels` and `/epochs/thresholds`; "Load Session from H5..." button in CLASSIFICATION panel (available before running classification) ✅
 11. `save_to_h5` updated: `session` parameter; labels + epoch_len taken from session; thresholds stored as HDF5 attributes ✅
 12. Draggable threshold reference lines: dotted lines on δ-power/EMG RMS/T:D axes; drag to update spinbox + session.thresholds live; spinbox edits also move lines ✅
-13. Full keyboard navigation: Space (play/pause), `[`/`]` + PageUp/Down (page), `←`/`→` (fine scroll), mouse-wheel (proportional scroll), Ctrl/Cmd+O (open folder), Ctrl/Cmd+E (open file) ✅
+13. Full keyboard navigation: Space (play/pause), `[`/`]` + PageUp/Down (page), `←`/`→` (move prev/next epoch when selection active, else fine scroll), mouse-wheel (proportional scroll), Ctrl/Cmd+O (open folder), Ctrl/Cmd+E (open file), Ctrl/Cmd+W/N/R/U (jump to next epoch of state), Ctrl/Cmd+Shift+W/N/R/U (jump to prev epoch of state) ✅
 14. `?` help button (transport bar, leftmost): scrollable step-by-step dialog; modifier key names are platform-aware (Cmd on macOS, Ctrl elsewhere) ✅
 15. Fusion Qt style set at app init: ensures spinbox/combobox arrows use palette colors (white in dark theme, black in light theme) ✅
 16. **Centre signals**: `⊕` transport button + `C` key centres all visible channels on their visible-window mean (stored as per-channel y-offset in `_y_offsets`); per-channel `⊕` icon in channel header row centres that channel only; **Optimize Scale** resets offset to 0 ✅

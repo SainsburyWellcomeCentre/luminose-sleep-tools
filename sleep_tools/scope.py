@@ -1690,6 +1690,75 @@ class Scope:
                 self_w._draw(self_w._t0)
                 self_w._populate_sidebar()
 
+            def _centre_view_on_epoch(self_w, idx: int) -> None:
+                """Scroll so that epoch *idx* is centred in the visible window."""
+                if self_w._session is None or self_w._recording is None:
+                    return
+                epoch_t = self_w._session.times[idx]
+                t0 = epoch_t - self_w._x_window / 2.0
+                max_t0 = max(0.0, self_w._recording.duration - self_w._x_window)
+                t0 = max(0.0, min(t0, max_t0))
+                self_w._scrollbar.setValue(int(t0 * _SCROLLBAR_RES))
+
+            def _navigate_to_state(self_w, state: str, forward: bool) -> None:
+                """Select the next (or previous) epoch whose label matches *state*.
+
+                Wraps around if no match exists beyond the current anchor.
+                Centers the view on the found epoch.
+                """
+                if self_w._session is None:
+                    return
+                labels = self_w._session.labels
+                matching = [i for i, lbl in enumerate(labels) if lbl == state]
+                if not matching:
+                    return
+
+                if self_w._sel_anchor is not None:
+                    start = self_w._sel_anchor
+                else:
+                    center_t = self_w._t0 + self_w._x_window / 2.0
+                    start = self_w._session.epoch_index(center_t)
+
+                if forward:
+                    ahead = [i for i in matching if i > start]
+                    found = min(ahead) if ahead else min(matching)
+                else:
+                    behind = [i for i in matching if i < start]
+                    found = max(behind) if behind else max(matching)
+
+                self_w._sel_indices = {found}
+                self_w._sel_anchor  = found
+                self_w._centre_view_on_epoch(found)
+                self_w._hypno_dirty = True
+                self_w._draw(self_w._t0)
+                self_w._populate_sidebar()
+
+            def _navigate_adjacent_epoch(self_w, forward: bool) -> None:
+                """Move the selection one epoch forward or backward.
+
+                Centers the view on the newly selected epoch.
+                """
+                if self_w._session is None:
+                    return
+                n = len(self_w._session.times)
+                if n == 0:
+                    return
+
+                if self_w._sel_anchor is not None:
+                    current = self_w._sel_anchor
+                else:
+                    center_t = self_w._t0 + self_w._x_window / 2.0
+                    current = self_w._session.epoch_index(center_t)
+
+                new_idx = min(current + 1, n - 1) if forward else max(current - 1, 0)
+
+                self_w._sel_indices = {new_idx}
+                self_w._sel_anchor  = new_idx
+                self_w._centre_view_on_epoch(new_idx)
+                self_w._hypno_dirty = True
+                self_w._draw(self_w._t0)
+                self_w._populate_sidebar()
+
             def _draw_threshold_lines(self_w) -> None:
                 """Draw draggable dotted reference lines at classification thresholds.
 
@@ -2076,14 +2145,19 @@ class Scope:
                     ("5  Review the hypnogram",
                      "Click an epoch in the colour strip to select it.<br>"
                      "• <b>Shift+click</b> — contiguous range from anchor<br>"
-                     f"• <b>{_mod}+click</b> — toggle individual epochs in/out of selection"),
+                     f"• <b>{_mod}+click</b> — toggle individual epochs in/out of selection<br>"
+                     "• <b>← / →</b> — move to the previous / next epoch (when an epoch is selected)"),
                     ("6  Label epochs",
                      f"<b>W / N / R / U</b> — assign Wake, NREM, REM, or Unscored to selected epochs.<br>"
-                     f"<b>{_mod}+Z / {_mod}+Y</b> — undo / redo."),
+                     f"<b>{_mod}+Z / {_mod}+Y</b> — undo / redo.<br><br>"
+                     f"<b>Jump to next epoch by state</b> (requires a selected epoch or active session):<br>"
+                     f"• <b>{_mod}+W / N / R / U</b> — jump forward to the next epoch of that state<br>"
+                     f"• <b>{_mod}+Shift+W / N / R / U</b> — jump backward to the previous epoch of that state<br>"
+                     "Wraps around to the first/last match if none remains in that direction."),
                     ("7  Navigate",
                      "<b>Space</b> — play / pause<br>"
                      "<b>[ / ]</b> or <b>PageUp / PageDown</b> — page back / forward<br>"
-                     "<b>← / →</b> — fine scroll (10 % of window)<br>"
+                     "<b>← / →</b> — move to prev/next epoch (when epoch selected) or fine scroll (10 % of window)<br>"
                      "<b>Mouse wheel</b> — scroll left / right"),
                     ("8  Centre &amp; scale signals",
                      "<b>C</b> or <b>⊕</b> (transport bar) — centre all visible signals on their "
@@ -2285,24 +2359,29 @@ class Scope:
                 if key in (Qt.Key.Key_BracketRight, Qt.Key.Key_PageDown):
                     self_w._on_next_page(); return
 
-                # Fine scroll: ← / → (10 % of visible window)
+                # ← / →: navigate epochs when one is selected, else fine scroll
                 if key == Qt.Key.Key_Left:
+                    if self_w._session is not None and self_w._sel_indices:
+                        self_w._navigate_adjacent_epoch(forward=False); return
                     step = self_w._x_window * 0.1
                     new_t0 = max(0.0, self_w._t0 - step)
                     self_w._scrollbar.setValue(int(new_t0 * _SCROLLBAR_RES))
                     return
-                if key == Qt.Key.Key_Right and self_w._recording:
-                    step = self_w._x_window * 0.1
-                    max_t0 = max(0.0, self_w._recording.duration - self_w._x_window)
-                    new_t0 = min(max_t0, self_w._t0 + step)
-                    self_w._scrollbar.setValue(int(new_t0 * _SCROLLBAR_RES))
+                if key == Qt.Key.Key_Right:
+                    if self_w._session is not None and self_w._sel_indices:
+                        self_w._navigate_adjacent_epoch(forward=True); return
+                    if self_w._recording:
+                        step = self_w._x_window * 0.1
+                        max_t0 = max(0.0, self_w._recording.duration - self_w._x_window)
+                        new_t0 = min(max_t0, self_w._t0 + step)
+                        self_w._scrollbar.setValue(int(new_t0 * _SCROLLBAR_RES))
                     return
 
                 # Centre all signals on visible mean
                 if key == Qt.Key.Key_C and not (mods & Ctrl):
                     self_w._centre_all_signals(); return
 
-                # Sleep stage assignment (W / N / R / U)
+                # W / N / R / U: assign state (bare) or jump to next/prev epoch (Ctrl / Ctrl+Shift)
                 if self_w._session is not None:
                     _state_keys = {
                         Qt.Key.Key_W: "W",
@@ -2310,7 +2389,13 @@ class Scope:
                         Qt.Key.Key_R: "R",
                         Qt.Key.Key_U: "U",
                     }
+                    Shift = Qt.KeyboardModifier.ShiftModifier
                     if key in _state_keys:
+                        if mods & Ctrl:
+                            self_w._navigate_to_state(
+                                _state_keys[key], forward=not bool(mods & Shift)
+                            )
+                            return
                         self_w._on_assign_state(_state_keys[key])
                         return
 
@@ -2331,6 +2416,7 @@ class Scope:
                 Qt.Key.Key_BracketLeft, Qt.Key.Key_BracketRight,
                 Qt.Key.Key_PageUp, Qt.Key.Key_PageDown,
                 Qt.Key.Key_Space,
+                Qt.Key.Key_W, Qt.Key.Key_N, Qt.Key.Key_R, Qt.Key.Key_U,
             }
 
             def __init__(self, win: "_ScopeWindow") -> None:

@@ -120,6 +120,8 @@ The Scope window provides:
 - LABELING panel: state counts, W/N/R/U buttons, undo/redo, save/export
 - Click or Shift+click epochs in the hypnogram to select; Cmd/Ctrl+click to toggle
 - Press **W / N / R / U** to relabel selected epochs; **Cmd/Ctrl+Z/Y** to undo/redo
+- **← / →** — move to the previous/next epoch when one is selected (or fine scroll when nothing selected)
+- **Cmd/Ctrl+W/N/R/U** — jump to the next epoch of that state; **Cmd/Ctrl+Shift+W/N/R/U** — jump to the previous
 - **`?` button** — opens a step-by-step scoring guide with all keyboard shortcuts
 
 ## Oscilloscope Viewer
@@ -144,7 +146,7 @@ The window features:
 - **Horizontal scrollbar** — Scrub through the full recording. Mouse wheel also scrolls (proportional to delta — trackpad-friendly).
 - **Play / Pause** — Transport button or `Space`. Speed slider (1×–100×, log-mapped).
 - **Page navigation** — `<` / `>` buttons, or `[` / `]` keys, or PageUp / PageDown.
-- **Fine scroll** — `←` / `→` keys (10 % of visible window per press).
+- **Fine scroll** — `←` / `→` keys (10 % of visible window per press when no epoch is selected); moves to the previous/next epoch when one is selected.
 - **Time Window** — Adjust visible width (0.1 – 3600 s) via the `⌛` menu.
 - **Per-channel controls** — Amplitude spinbox, unit selector, and Optimize Scale button for each trace. `⊕` icon in the channel header centres that trace on its visible mean; `−` hides it.
 - **Centre signals** — `⊕` button in the transport bar (or press `C`) centres all visible channels on their visible mean simultaneously. Per-channel `⊕` in the header row does the same for one channel. Clicking **Optimize Scale** resets that channel's offset back to zero baseline.
