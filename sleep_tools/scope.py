@@ -1777,7 +1777,7 @@ class Scope:
                     return
                 thr = self_w._session.thresholds
 
-                _delta_bw = 4.0              # BANDS["delta"] = (0.0, 4.0) Hz
+                _delta_bw = BANDS["delta"][1] - BANDS["delta"][0]
                 _delta_to_base = _delta_bw / 1e12   # µV²/Hz → V²
                 _emg_to_base = 1.0 / 1e6            # µV → V
 

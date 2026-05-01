@@ -10,9 +10,9 @@ from sleep_tools.io import SleepRecording
 
 
 # Frequency bands used for sleep staging (Hz).
-# Delta starts at 0 to include all slow-wave power below 4 Hz.
+# Delta starts at 0.5 Hz to match the high-pass cutoff and exclude the DC bin.
 BANDS: dict[str, tuple[float, float]] = {
-    "delta": (0.0, 4.0),
+    "delta": (0.5, 4.0),
     "theta": (6.0, 10.0),
     "alpha": (8.0, 13.0),
     "beta":  (13.0, 30.0),
@@ -27,7 +27,7 @@ _EMG_BP_HIGH: float = 45.0
 FEATURE_INFO: dict[str, dict] = {
     "delta_power": {
         "description": (
-            "Delta band power (0–4 Hz): Hann-windowed FFT, smoothed in time."
+            "Delta band power (0.5–4 Hz): Hann-windowed FFT, smoothed in time."
         ),
         "frequency_range_hz": BANDS["delta"],
         "units": "V²/Hz · Hz",
@@ -419,8 +419,8 @@ class SleepAnalyzer:
 
         Resamples EEG to *target_sfreq*, applies a Hann-windowed FFT every
         *output_interval* seconds (coarse frequency resolution, fine time
-        resolution), then smooths with a zero-phase exponential filter
-        (τ = *smoothing_tau* seconds).
+        resolution), then smooths with a causal exponential filter
+        (τ = *smoothing_tau* seconds, `lfilter`).
 
         Frequency resolution = target_sfreq / fft_size (e.g. 512/256 = 2 Hz).
         """
@@ -468,8 +468,8 @@ class SleepAnalyzer:
         if smoothing_tau > 0.0 and power.size > 3:
             sr = 1.0 / output_interval
             alpha = 1.0 - np.exp(-1.0 / (sr * smoothing_tau))
-            power = signal.filtfilt(
-                [alpha], [1.0, -(1.0 - alpha)], power, method="gust"
+            power = signal.lfilter(
+                [alpha], [1.0, -(1.0 - alpha)], power
             )
         return times, np.maximum(power, 0.0)
 

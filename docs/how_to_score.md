@@ -132,17 +132,17 @@ The total window width is 10 s (±5 s), matching the Spike2 OSD4 protocol which 
 
 **Goal**: quantify spectral energy in five physiologically meaningful frequency bands for every epoch.
 
-**Bands** (`BANDS`, `analysis.py:10`):
+**Bands** (`BANDS`, `analysis.py:14`):
 
 | Band | Range (Hz) | Sleep relevance |
 |------|-----------|-----------------|
-| Delta | 0 – 4.0 | Primary NREM marker; very high in slow-wave sleep |
+| Delta | 0.5 – 4.0 | Primary NREM marker; very high in slow-wave sleep |
 | Theta | 6.0 – 10.0 | Elevated in REM; numerator of T:D ratio |
 | Alpha | 8.0 – 13.0 | Overlaps theta in rodents; available for custom staging |
 | Beta | 13.0 – 30.0 | Elevated during Wake and arousal |
 | Gamma | 30.0 – 100.0 | High-frequency arousal; elevated during active wake |
 
-Delta starts at 0 Hz to include all slow-wave power below 4 Hz, matching the scoring protocol. Any residual DC is suppressed by the upstream EEG high-pass filter.
+Delta starts at 0.5 Hz to match the EEG high-pass cutoff and exclude the DC bin. Including 0 Hz would inflate delta estimates with any residual DC offset that survives the drift-subtraction step.
 
 Note: alpha and theta overlap in the 8–10 Hz range. This is intentional — rodent theta peaks around 7–9 Hz, which falls in both bands. Both are kept for flexibility.
 
@@ -157,11 +157,11 @@ Note: alpha and theta overlap in the 8–10 Hz range. This is intentional — ro
 
 3. For each window, compute one-sided FFT power and sum bins in band (f_lo, f_hi).
 
-4. Apply zero-phase exponential smoothing (τ = 5 s) to the resulting time series.
+4. Apply causal exponential smoothing (τ = 5 s, `scipy.signal.lfilter`) to the resulting time series.
 ```
 
 **Why this method for scoring?**
-The 2 Hz frequency resolution is coarser than an STFT on the raw signal, but the fine 0.1 s time grid and 5 s smoothing give a stable, epoch-aligned feature that closely follows the Spike2 OSD4 protocol (`Pw(...)` function with default settings).
+The 2 Hz frequency resolution is coarser than an STFT on the raw signal, but the fine 0.1 s time grid and causal 5 s smoothing give a stable, epoch-aligned feature that closely follows the Spike2 OSD4 protocol (`Pw(...)` function with default settings). Causal smoothing (`lfilter`) matches Spike2's real-time exponential smoother; zero-phase (`filtfilt`) would double the effective time constant and introduce non-causal look-ahead.
 
 **Spectrogram / visualisation** uses `spectrogram()` (STFT, Hann window, `scaling='density'`), which gives 0.2 Hz frequency resolution at 5 s windows — better suited for visual inspection of spectral structure.
 
@@ -222,8 +222,8 @@ For each scoring epoch i (centre time t_centre):
      k = argmin |feat_times − t_centre|
 
   2. Convert base units to display units:
-     delta_µV² = delta_power[k] × (1e12 / 4.0)   # 4.0 Hz = delta bandwidth (0–4 Hz)
-     emg_µV    = emg_rms[k]    × 1e6
+     delta_µV²/Hz = delta_power[k] × (1e12 / 3.5)   # 3.5 Hz = delta bandwidth (0.5–4 Hz)
+     emg_µV       = emg_rms[k]    × 1e6
 
   3. Apply rules in order (later rules overwrite earlier ones):
 

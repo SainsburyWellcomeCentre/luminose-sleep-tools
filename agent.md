@@ -333,7 +333,7 @@ Observed facts:
 - Raw signals match exactly after unit conversion. Spike2 MAT stores raw data in `uV`; sleep-tools/MNE stores raw data in `V`. Multiplying H5/EDF values by `1e6` gives correlation approximately 1.0 for EEG1, EEG2, and EMG.
 - Spike2 filtered EEG in the MAT file uses `EEG2`, not EEG1 and not an EEG1+EEG2 average. Numerically, `EEGFilt == EEG2 - EEGLow`.
 - Spike2 `EEGLow` matches a causal 2nd-order Butterworth low-pass (`scipy.signal.lfilter`) at 0.5 Hz. sleep-tools `filter_eeg` now also uses causal `signal.lfilter` — EEG channel selection (EEG2 in Spike2 vs configurable in sleep-tools) remains the main difference.
-- Spike2 power traces use `Power in band: 0.0 - 4.0 Hz; tc: 5.0s` on a 0.1 s grid. sleep-tools `_band_power_smoothed` now matches this: OSD4-style chunked Hann FFT at 0.1 s intervals with 5 s exponential smoothing.
+- Spike2 power traces use `Power in band: 0.0 - 4.0 Hz; tc: 5.0s` on a 0.1 s grid. sleep-tools `_band_power_smoothed` now matches this: OSD4-style chunked Hann FFT at 0.1 s intervals with causal 5 s exponential smoothing (`lfilter`). Our `BANDS["delta"]` starts at 0.5 Hz (not 0.0 Hz) to exclude the DC bin — Spike2 includes 0 Hz, but residual DC is negligible after the EEG drift-subtraction step and the T:D ratio is unaffected by this difference.
 - Spike2 `EMGFilt` in the MAT file is positive and envelope-like, roughly `20-58 uV`, so compare it to sleep-tools `emg_rms`, not to the centered FIR band-passed waveform returned by `filter_emg`.
 - The inspected H5 is internally inconsistent: root `epoch_len = 10.0`, `/epochs/times` and `/epochs/labels` length `17547`, but every `/epochs/features/*` dataset has length `70187`. This happens because `save_to_h5(..., analyzer=..., session=...)` computes analyzer features first, then replaces `times` with `session.times` without resampling or rebuilding the feature arrays.
 
@@ -342,7 +342,8 @@ Observed facts:
 The pipeline was implemented as a single Spike2-compatible approach — no separate `standard`/`spike2` profile parameter was added to the public API. All scoring uses:
 - Causal EEG drift filtering (`signal.lfilter`)
 - Zero-phase FIR EMG bandpass + centred ±5 s uniform-window RMS
-- OSD4-style chunked Hann FFT band powers (0.1 s grid, 5 s smoothing, 512 Hz target)
+- OSD4-style chunked Hann FFT band powers (0.1 s grid, causal 5 s smoothing via `lfilter`, 512 Hz target)
+- Delta band: 0.5–4.0 Hz (`BANDS["delta"]`); `_DELTA_BW = 3.5` Hz in `state.py`; threshold lines in `scope.py` read from `BANDS["delta"]` dynamically
 - Spectrogram (STFT) is a separate display-only method
 
 Completed items:
@@ -350,9 +351,10 @@ Completed items:
 2. **Analyzer cache correctness** ✅ — `_FeatureCacheKey` frozen dataclass covers all filter params, band definitions, FFT config.
 3. **EEG filtering** ✅ — causal `signal.lfilter` matching Spike2 `EEGLow` construction.
 4. **EMG envelope** ✅ — `filter_emg()` is the FIR band-pass waveform; `emg_rms()` is the centred uniform-window RMS envelope used for scoring.
-5. **Band power (scoring)** ✅ — `_band_power_smoothed`: OSD4-style chunked Hann FFT at 0.1 s intervals, 5 s exponential smoothing.
+5. **Band power (scoring)** ✅ — `_band_power_smoothed`: OSD4-style chunked Hann FFT at 0.1 s intervals, causal 5 s exponential smoothing (`lfilter`). Delta band 0.5–4.0 Hz (not 0.0–4.0); `_DELTA_BW = 3.5` Hz. `filtfilt` was a bug (doubled time constant, non-causal).
 6. **OSD4 script inspection** ✅ — `OSD4.s2s`: EMG Spike2 RMS `5 s (=±5 s)`; EEG interpolated to ~512 Hz; `Pw(eegch, stepsz, low, high)` every 0.1 s; Smooth channel `tc=5 s`.
-7. **Scope GUI** — EEG channel selector added (`∿` button); no separate profile button (single pipeline makes it unnecessary).
+7. **Scope GUI** — EEG channel selector added (`∿` button); no separate profile button (single pipeline makes it unnecessary). Threshold lines use `BANDS["delta"][1] - BANDS["delta"][0]` (not hardcoded `4.0`) for µV²/Hz ↔ µV² conversion.
+8. **EEG channel selection** ✅ — Spike2 OSD4 uses EEG2 for band power in the validated recordings. Select EEG2 via the `∿` button in Scope before running classification to match Spike2 trends.
 
 Tests added:
 - `test_filter_eeg_causal_matches_lfilter` ✅

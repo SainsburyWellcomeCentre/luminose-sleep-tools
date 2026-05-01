@@ -26,7 +26,7 @@ For signal processing details and scoring workflow see [docs/how_to_score.md](do
 
 - **EEG**: causal 2nd-order Butterworth low-pass at 0.5 Hz → subtract drift (≈ high-pass).
 - **EMG**: FIR bandpass 5–45 Hz (transition 1.8 Hz) → centred ±5 s uniform-window RMS.
-- **Band powers** (scoring): 256-pt Hann FFT every 0.1 s on EEG resampled to 512 Hz, then 5 s exponential smoothing. Approximates the Spike2 OSD4 `Pw(...)` function. Delta 0–4 Hz, theta 6–10 Hz.
+- **Band powers** (scoring): 256-pt Hann FFT every 0.1 s on EEG resampled to 512 Hz, then causal 5 s exponential smoothing (`lfilter`). Approximates the Spike2 OSD4 `Pw(...)` function. Delta 0.5–4 Hz, theta 6–10 Hz.
 - **Spectrogram** (visualisation): STFT via `scipy.signal.spectrogram`, Hann window, `scaling='density'`. Better frequency resolution than the scoring method.
 
 ## HDF5 Export
@@ -112,8 +112,7 @@ Opens a PySide6 Qt window.  Backend must be `QtAgg` (set at module level in `sco
 - **Epoch length field**: `QDoubleSpinBox` in the RECORDING panel, below the **Analyze Signals** button (range 0.5–60.0 s, default 5.0 s); value applied to `analyzer.epoch_len` when Analyze Signals is clicked; stored in `self_w._epoch_len_spin`
 - **Reset Defaults button**: in the CLASSIFICATION panel; restores all six threshold spinboxes and epoch length to `AutoScoreThresholds()` factory values via `_on_reset_thr_defaults()`
 - **? help button**: leftmost transport button; shows step-by-step scoring instructions (keyboard shortcuts are platform-aware: Cmd on macOS, Ctrl elsewhere)
-- **EEG channel selector**: `∿` button in the transport bar (right of `↕`); opens a popup menu with **Average (EEG1+EEG2)** (default), **EEG1 only**, **EEG2 only**; button label updates to show current selection (e.g. `∿ EEG1`); click **Analyze Signals** after changing to recompute features with the chosen channel; unavailable options are greyed out when a channel is missing
-- **EEG channel selector**: `∿` button in the transport bar opens a menu to choose **EEG1** or **EEG2**; click **Analyze Signals** after changing to recompute features with the selected channel.
+- **EEG channel selector**: `∿` button in the transport bar (right of `↕`); opens a popup menu with **Average (EEG1+EEG2)** (default), **EEG1 only**, **EEG2 only**; button label updates to show current selection (e.g. `∿ EEG1`); click **Analyze Signals** after changing to recompute features with the chosen channel; unavailable options are greyed out when a channel is missing. **Important**: if the Spike2 reference used EEG2, select EEG2 here before running classification to match Spike2 band power trends.
 
 ### `make_video(output_path=None, *, signals, t_start, t_end, x_window, y_lims, fps, speed, figsize, dpi, session=None, session_h5=None, show_hypnogram=True)`
 Renders a scrolling MP4 video using `matplotlib.animation.FFMpegWriter`.
